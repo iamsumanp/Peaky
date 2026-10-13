@@ -1,0 +1,7 @@
+.build/
+build/
+*.dmg
+build.local.sh
+Fonts/
+.DS_Store
+.swiftpm/
