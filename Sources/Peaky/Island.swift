@@ -152,6 +152,16 @@ final class IslandModel: ObservableObject {
     @Published var dropTargeted = false { didSet { revision &+= 1 } }
     /// Files on the shelf — the open island grows a row at a time to show them.
     @Published private(set) var shelfCount = 0 { didSet { revision &+= 1 } }
+    /// The app in front. Claude alerts stay out of the way while you're already looking at Claude's app.
+    @Published private(set) var frontApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
+        didSet { revision &+= 1 }
+    }
+
+    /// Is this alert's Claude session in the app you're looking at right now?
+    func lookingAt(_ n: Notice?) -> Bool {
+        guard Prefs.bool(.claudeQuietWhenFront), let app = n?.focus?.app else { return false }
+        return app == frontApp
+    }
     /// Downloads in progress, shown beside the notch until they finish.
     @Published private(set) var downloads: [DownloadsMonitor.Item] = [] { didSet { revision &+= 1 } }
     /// Meeting shown left of the notch while idle (15 min before → end), and its "in 10 mins" text.
@@ -167,7 +177,7 @@ final class IslandModel: ObservableObject {
 
     /// Left-slot priority: Claude needs you > a download in progress > meeting (15 min before → end).
     var status: StatusItem? {
-        if let c = claudeWaiting {
+        if let c = claudeWaiting, !lookingAt(c) {
             return StatusItem(kind: .claude, title: c.title, detail: c.detail ?? "Needs you", tint: c.tint,
                               bar: nil, symbol: c.symbol, openURL: c.openURL,
                               actionLabel: c.openURL == nil && c.focus == nil ? nil : "Open", ask: c.ask, focus: c.focus)
@@ -223,6 +233,11 @@ final class IslandModel: ObservableObject {
         self.geo = geo
         pet = Prefs.pet
         IslandHub.events.sink { [weak self] in self?.receive($0) }.store(in: &bag)
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didActivateApplicationNotification)
+            .compactMap { ($0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier }
+            .sink { [weak self] id in self?.frontAppChanged(id) }
+            .store(in: &bag)
         Services.shared.shelf.$items.map(\.count).removeDuplicates()
             .sink { [weak self] n in self?.shelfCount = n }.store(in: &bag)
         Services.shared.downloads.$items.receive(on: RunLoop.main)
@@ -270,6 +285,14 @@ final class IslandModel: ObservableObject {
                 withAnimation(Self.spring) { self.pet = Prefs.pet }
             }
             .store(in: &bag)
+    }
+
+    private func frontAppChanged(_ id: String) {
+        withAnimation(Self.spring) { frontApp = id }
+        // Switched to the app a Claude popup is about: it has done its job.
+        guard Prefs.bool(.claudeQuietWhenFront) else { return }
+        queue.removeAll { $0.focus?.app == id }
+        if notice?.focus?.app == id { endNotice(force: true) }
     }
 
     private func refreshAgenda() {
@@ -484,6 +507,17 @@ final class IslandModel: ObservableObject {
             queue.removeAll { $0.key == key }
             if notice?.key == key { endNotice(force: true) }
         case .notice(var n):
+            if lookingAt(n) {
+                // You're already in the app this Claude session runs in: no popup. A wait is still kept
+                // (hidden) so it appears if you switch away before answering.
+                if n.sticky {
+                    if n.ask == nil, n.key == claudeWaiting?.key { n.ask = claudeWaiting?.ask }
+                    setClaudeWaiting(n)
+                } else if let key = n.key, key == claudeWaiting?.key {
+                    setClaudeWaiting(nil)
+                }
+                return
+            }
             if n.sticky, let key = n.key, claudeWaiting?.key == key {
                 // Same wait already announced (PermissionRequest fires at once, Claude Code's Notification
                 // ~6 s later): just keep the slot current, no second popup — and keep its Allow / Deny.

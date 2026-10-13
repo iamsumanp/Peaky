@@ -8,7 +8,7 @@ enum Prefs {
     enum Key: String {
         case display, openOnHover, showMusicActivity, showHUD, hudReplace, pet
         case awakeDisplay, awakeDefault, awakeAtLaunch
-        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove
+        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront
     }
 
     static func register() {
@@ -21,6 +21,7 @@ enum Prefs {
             Key.awakeAtLaunch.rawValue: false,
             Key.claudeWaitSeconds.rawValue: 120,
             Key.claudeNotchApprove.rawValue: true,
+            Key.claudeQuietWhenFront.rawValue: true,
             Key.showMusicActivity.rawValue: true,
             Key.showHUD.rawValue: true,
             Key.hudReplace.rawValue: false,
@@ -440,6 +441,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.Key.notifyCalendar.rawValue) private var notifyCalendar = true
     @AppStorage(Prefs.Key.claudeWaitSeconds.rawValue) private var claudeWait = 120.0
     @AppStorage(Prefs.Key.claudeNotchApprove.rawValue) private var claudeApprove = true
+    @AppStorage(Prefs.Key.claudeQuietWhenFront.rawValue) private var claudeQuiet = true
 
     @ObservedObject private var cal = Services.shared.calendar
     @State private var trusted = MediaKeyTap.trusted
@@ -534,6 +536,8 @@ struct SettingsView: View {
                     Text("5 minutes").tag(300.0)
                     Text("Until handled").tag(3600.0)
                 }
+                Toggle("Stay quiet while Claude's app is in front", isOn: $claudeQuiet)
+                    .help("No Claude alerts while you're looking at the app the session runs in (the Claude app, that Terminal, that editor). If you switch away while Claude still needs you, it shows up in the notch then.")
                 Toggle("Allow / Deny Claude from the notch", isOn: $claudeApprove)
                     .help("For Claude in the Claude app: approve or refuse a permission request from the open island. Claude's own prompt still works too; whichever you answer first counts.")
                 HStack {
