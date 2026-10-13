@@ -33,7 +33,7 @@ struct SessionFocus: Equatable {
         let app = app ?? ""
         // Terminals: bring the exact tab forward. The tty goes into AppleScript source, so only ever a plain
         // "/dev/ttys012" — never text that could close the string and add commands.
-        if let tty, tty.range(of: #"^/dev/ttys[0-9]{1,4}$"#, options: .regularExpression) != nil {
+        if let tty, Self.isSafeTTY(tty) {
             if app == "com.apple.Terminal", Self.run("""
                 tell application "Terminal"
                     repeat with w in windows
@@ -72,6 +72,10 @@ struct SessionFocus: Equatable {
         }
         // The Claude app (no link to a single session exists) or anything else: just bring it forward.
         NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    static func isSafeTTY(_ tty: String) -> Bool {
+        tty.range(of: #"^/dev/ttys[0-9]{1,4}$"#, options: .regularExpression) != nil
     }
 
     @discardableResult

@@ -296,11 +296,12 @@ final class CalendarService: ObservableObject {
 
     /// Right after a meeting ends: the next one ("Next: Standup · in 25 mins") instead of nothing. Shown all the
     /// way to its start when it's within the hour; otherwise just for 5 minutes after the last one ends.
-    var upNext: CalEvent? {
-        let now = Date()
+    var upNext: CalEvent? { Self.upNext(today: today, upcoming: events, now: Date()) }
+
+    static func upNext(today: [CalEvent], upcoming: [CalEvent], now: Date) -> CalEvent? {
         guard let last = today.filter({ !$0.allDay && $0.end <= now }).max(by: { $0.end < $1.end }),
-              let next = events.first(where: { !$0.allDay && $0.start > now }),
-              Calendar.current.isDateInToday(next.start) else { return nil }
+              let next = upcoming.first(where: { !$0.allDay && $0.start > now }),
+              Calendar.current.isDate(next.start, inSameDayAs: now) else { return nil }
         return next.start.timeIntervalSince(last.end) <= 3600 || now.timeIntervalSince(last.end) < 300 ? next : nil
     }
 

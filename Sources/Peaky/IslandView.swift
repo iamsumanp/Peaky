@@ -557,6 +557,16 @@ struct PlayerRow: View {
 
     var body: some View {
         if np.hasMedia {
+            VStack(spacing: 6) {
+                player
+                if np.duration > 1 { Scrubber() }
+            }
+        } else {
+            IdleRow()
+        }
+    }
+
+    private var player: some View {
             HStack(spacing: 12) {
                     ArtworkView(image: np.artwork, size: 56)
                         .overlay(alignment: .bottomTrailing) {
@@ -582,9 +592,60 @@ struct PlayerRow: View {
                         PixelButton(symbol: "forward.fill", size: 36, iconSize: 13, filled: false) { np.next() }
                     }
             }
-        } else {
-            IdleRow()
+    }
+}
+
+/// `1:12 ━━━━●──── 3:45` — how far into the track; click or drag to jump.
+struct Scrubber: View {
+    @ObservedObject var np = Services.shared.nowPlaying
+    /// While dragging: where the knob is (0…1); the track only seeks when you let go.
+    @State private var dragging: Double?
+    @State private var hover = false
+
+    var body: some View {
+        // Ticks only while the open island is on screen.
+        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+            let d = max(np.duration, 1)
+            let f = dragging ?? min(max(np.elapsed(at: ctx.date) / d, 0), 1)
+            HStack(spacing: 8) {
+                Text(Self.time(f * d))
+                    .frame(width: 38, alignment: .trailing)
+                GeometryReader { g in
+                    let w = g.size.width
+                    let active = hover || dragging != nil
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.15)).frame(height: active ? 5 : 3)
+                        Capsule().fill(Color.white.opacity(0.85)).frame(width: max(3, w * f), height: active ? 5 : 3)
+                        Circle().fill(Color.white)
+                            .frame(width: 10, height: 10)
+                            .offset(x: w * f - 5)
+                            .opacity(active ? 1 : 0)
+                    }
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { v in dragging = min(max(v.location.x / max(w, 1), 0), 1) }
+                        .onEnded { v in
+                            np.seek(to: min(max(v.location.x / max(w, 1), 0), 1) * d)
+                            dragging = nil
+                        })
+                    .animation(.easeOut(duration: 0.12), value: active)
+                }
+                .onHover { hover = $0 }
+                Text(Self.time(d))
+                    .frame(width: 38, alignment: .leading)
+            }
+            .font(Theme.mono(10))
+            .foregroundStyle(.white.opacity(0.5))
+            .monospacedDigit()
         }
+        .frame(height: IslandModel.scrubberHeight - 6)
+    }
+
+    /// 75 → "1:15", 3725 → "1:02:05".
+    static func time(_ s: Double) -> String {
+        let t = Int(s.rounded(.down)), h = t / 3600, m = (t % 3600) / 60, sec = t % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
     }
 }
 

@@ -152,6 +152,9 @@ final class IslandModel: ObservableObject {
     @Published var dropTargeted = false { didSet { revision &+= 1 } }
     /// Files on the shelf — the open island grows a row at a time to show them.
     @Published private(set) var shelfCount = 0 { didSet { revision &+= 1 } }
+    /// The open player shows a progress bar when the track has a length (not for live streams).
+    @Published private(set) var showsScrubber = false { didSet { revision &+= 1 } }
+    static let scrubberHeight: CGFloat = 22
     /// The app in front. Claude alerts stay out of the way while you're already looking at Claude's app.
     @Published private(set) var frontApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier {
         didSet { revision &+= 1 }
@@ -237,6 +240,13 @@ final class IslandModel: ObservableObject {
             .publisher(for: NSWorkspace.didActivateApplicationNotification)
             .compactMap { ($0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier }
             .sink { [weak self] id in self?.frontAppChanged(id) }
+            .store(in: &bag)
+        let player = Services.shared.nowPlaying
+        player.$duration.combineLatest(player.$recentlyActive, player.$title)
+            .map { d, active, title in d > 1 && active && !title.isEmpty }
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] on in withAnimation(Self.spring) { self?.showsScrubber = on } }
             .store(in: &bag)
         Services.shared.shelf.$items.map(\.count).removeDuplicates()
             .sink { [weak self] n in self?.shelfCount = n }.store(in: &bag)
@@ -361,7 +371,8 @@ final class IslandModel: ObservableObject {
             if tab == .shelf, shelfCount > 0 {
                 return CGSize(width: w, height: h + 6 + Self.shelfBarHeight + 6 + shelfGridHeight(width: w) + 14)
             }
-            return CGSize(width: w, height: h + 76 + (showsStatusLine ? statusLineH : 0))
+            return CGSize(width: w, height: h + 76 + (showsStatusLine ? statusLineH : 0)
+                                       + (tab == .home && showsScrubber ? Self.scrubberHeight : 0))
         }
     }
 

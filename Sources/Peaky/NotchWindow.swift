@@ -21,6 +21,16 @@ final class NotchPanel: NSPanel {
         ignoresMouseEvents = true
         collectionBehavior = overFullscreen ? [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
                                             : [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        applyCapturePrivacy()
+    }
+
+    /// Screen sharing and recording see the screen without this window (setting: Hide Peaky from screen sharing).
+    func applyCapturePrivacy() {
+        sharingType = Prefs.bool(.hideFromCapture) ? .none : .readOnly
+    }
+
+    static func applyCapturePrivacy() {
+        NSApp.windows.compactMap { $0 as? NotchPanel }.forEach { $0.applyCapturePrivacy() }
     }
 
     /// Normally never key (it must not take your typing). Clicking in the shelf lets it take the keyboard

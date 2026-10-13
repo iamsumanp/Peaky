@@ -8,7 +8,7 @@ enum Prefs {
     enum Key: String {
         case display, openOnHover, showMusicActivity, showHUD, hudReplace, pet
         case awakeDisplay, awakeDefault, awakeAtLaunch
-        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates
+        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates, hideFromCapture
     }
 
     static func register() {
@@ -23,6 +23,7 @@ enum Prefs {
             Key.claudeNotchApprove.rawValue: true,
             Key.claudeQuietWhenFront.rawValue: true,
             Key.checkUpdates.rawValue: true,
+            Key.hideFromCapture.rawValue: true,
             Key.showMusicActivity.rawValue: true,
             Key.showHUD.rawValue: true,
             Key.hudReplace.rawValue: false,
@@ -321,6 +322,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let m = controllers.first?.model
         switch cmd {
         case "expand": m?.expand(tab: .home)
+        case "captureon", "captureoff":
+            // Debug screenshots: let the island be captured (or hide it again) without touching the setting.
+            NSApp.windows.compactMap { $0 as? NotchPanel }.forEach { $0.sharingType = cmd == "captureon" ? .readOnly : .none }
         case "menutest":
             // A menu opens over the island, the mouse "leaves", the island must stay; then the menu closes.
             let menu = NSMenu()
@@ -483,6 +487,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.Key.claudeWaitSeconds.rawValue) private var claudeWait = 120.0
     @AppStorage(Prefs.Key.claudeNotchApprove.rawValue) private var claudeApprove = true
     @AppStorage(Prefs.Key.claudeQuietWhenFront.rawValue) private var claudeQuiet = true
+    @AppStorage(Prefs.Key.hideFromCapture.rawValue) private var hideFromCapture = true
 
     @ObservedObject private var cal = Services.shared.calendar
     @State private var trusted = MediaKeyTap.trusted
@@ -529,6 +534,9 @@ struct SettingsView: View {
             Section("Island") {
                 Toggle("Open instantly on hover (otherwise click)", isOn: $openOnHover)
                 Toggle("Show music as a live activity", isOn: $showMusic)
+                Toggle("Hide Peaky from screen sharing", isOn: $hideFromCapture)
+                    .onChange(of: hideFromCapture) { NotchPanel.applyCapturePrivacy() }
+                    .help("When you share your screen (Meet, Zoom, Teams…) or record it, the island isn't in the picture, so nobody sees your Claude alerts, meeting titles or shelf. Your own screenshots skip it too.")
             }
 
             Section {

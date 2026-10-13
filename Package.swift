@@ -18,5 +18,10 @@ let package = Package(
                 .linkedFramework("Quartz"),
             ]
         ),
+        .testTarget(
+            name: "PeakyTests",
+            dependencies: ["Peaky"],
+            path: "Tests/PeakyTests"
+        ),
     ]
 )

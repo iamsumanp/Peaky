@@ -20,7 +20,7 @@ Music, meetings, Claude Code, downloads, a file shelf, Keep Awake, and a pixel c
 
 The notch stays a notch. Peaky only grows when there is something worth showing, and it opens when you hover over it.
 
-- **Music.** Album art and live bars while anything plays: Spotify, Apple Music, YouTube in a browser, and so on. Hover to see the track and controls; click to open the full player. It goes away a minute after you pause.
+- **Music.** Album art and live bars while anything plays: Spotify, Apple Music, YouTube in a browser, and so on. Hover to see the track and controls; click to open the full player, which has a progress bar you can click or drag to jump around in the track. It goes away a minute after you pause.
 - **Meetings.** From 15 minutes before a meeting starts, the notch shows the title on one side and the time on the other ("in 10 mins", "1 hr 2 mins left"). It has a **Join** button for Meet, Zoom, Teams, Webex, Jitsi, and Slack huddles. When a meeting ends, the next one shows up ("Next: Standup"). The menu-bar icon lists today's meetings, MeetingBar-style. Meetings you declined are hidden.
 - **Claude Code.** You get "Finished", "Needs permission", and "Has a question" the moment they happen, labelled with the project name ("Claude · my-app"). Click the alert to jump back to that session's Terminal or iTerm tab, or its VS Code / Cursor window. In the Claude app you can also **Allow or Deny** a permission request right from the notch. Peaky stays quiet while you're already looking at the app the session runs in; if you switch away while Claude still needs you, the alert shows up then. See [Claude Code setup](#claude-code-setup).
 - **Downloads.** While a browser downloads into `~/Downloads`, the notch shows the file name and percentage, then "Downloaded". Click it to see the file in Finder.
@@ -30,6 +30,7 @@ The notch stays a notch. Peaky only grows when there is something worth showing,
 - **Alerts.** One short popup for AirPods and other Bluetooth devices connecting, for charging, and for low battery.
 - **Pet.** A pixel cat (or dog, or bunny) sits beside the notch when nothing else is going on. Off by default.
 - **Any monitor.** On screens without a notch, Peaky draws a compact one. You choose which displays get it, and whether it stays visible over full-screen apps on each one.
+- **Private in screen shares.** By default, Peaky is invisible to screen sharing and recording (Meet, Zoom, Teams…), so nobody sees your Claude alerts, meeting titles or shelf. Your own screenshots skip it too. Turn it off in Settings → Island.
 
 Everything is in **Settings** (menu-bar icon → Settings…). Peaky checks GitHub once a day for a new version and tells you when one is out; it sends nothing about you. If it ever crashes, it reopens itself.
 
@@ -111,6 +112,7 @@ cd Peaky && ./build.sh
 
 - `./build.sh` builds the app, installs it to `~/Applications`, and starts it.
 - `./build.sh --dmg` builds `build/Peaky-<version>.dmg` instead.
+- `tools/test.sh` runs the tests: version checks, the Claude hooks editor, meeting timing, the signed channel and the formatters.
 - `PEAKY_DEBUG=1 ./build.sh` adds the debug commands used by `tools/debug.sh`, for previewing states from a terminal. Release builds and DMGs never include them.
 
 The build is ad-hoc signed, which means macOS may ask for permissions again after each rebuild. A self-signed certificate avoids that; see [tools/make-signing-cert.md](tools/make-signing-cert.md).

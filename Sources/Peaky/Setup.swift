@@ -8,11 +8,15 @@ import SwiftUI
 enum ClaudeHooks {
     enum State: Equatable { case notInstalled, partial, installed, unreadable }
 
+    /// Tests point these somewhere harmless.
+    static var settingsOverride: URL?
+    static var commandOverride: String?
+
     static var settingsURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
+        settingsOverride ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
     }
     static var command: String {
-        Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/peaky-cli").path + " claude"
+        commandOverride ?? Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/peaky-cli").path + " claude"
     }
     /// Everything except PermissionRequest is fire-and-forget; that one waits for Allow / Deny.
     static let events = ["Stop", "Notification", "PostToolUse", "UserPromptSubmit", "PermissionRequest"]
