@@ -93,6 +93,12 @@ final class NotchController {
         "laidOutWidth=\(Int(RenderProbe.width)) \(String(format: "%.2fs ago", -RenderProbe.at.timeIntervalSinceNow)) | hostingLayer=\(Int(panel.contentView?.layer?.sublayers?.first?.bounds.width ?? -1))"
     }
 
+    /// After something kept the island open (Quick Look): close it if the mouse is no longer over it.
+    func collapseIfMouseLeft() {
+        updateMouse()
+        if model.expanded, !hitRect.contains(mouse) { model.collapse() }
+    }
+
     /// Debug only: the notch centre in screen coordinates.
     var notchCentre: CGPoint { CGPoint(x: screen.frame.midX, y: screen.frame.maxY - 10) }
 

@@ -7,12 +7,54 @@
 //   peaky run npm test                         run a command, then report ✓/✗ with how long it took
 //   peaky claude                               Claude Code hook (reads the hook JSON from stdin)
 import AppKit
+import CryptoKit
+
+// MARK: Signed channel (same as Sources/Peaky/Channel.swift — keep in sync)
+//
+// Distributed notifications can be posted and observed by any app, so every message is signed with a key in
+// ~/Library/Application Support/Peaky/channel.key (mode 600). Peaky ignores unsigned alerts, and this tool
+// ignores unsigned answers — another app can't approve Claude's permission requests.
+
+let channelKey: SymmetricKey = {
+    let fm = FileManager.default
+    let dir = fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Peaky")
+    let url = dir.appendingPathComponent("channel.key")
+    if let d = try? Data(contentsOf: url), d.count == 32 { return SymmetricKey(data: d) }
+    try? fm.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let fresh = SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+    if !fm.createFile(atPath: url.path, contents: fresh, attributes: [.posixPermissions: 0o600]),
+       let d = try? Data(contentsOf: url), d.count == 32 {
+        return SymmetricKey(data: d)
+    }
+    return SymmetricKey(data: (try? Data(contentsOf: url)) ?? fresh)
+}()
+
+func mac(_ s: String) -> String {
+    HMAC<SHA256>.authenticationCode(for: Data(s.utf8), using: channelKey).map { String(format: "%02x", $0) }.joined()
+}
+
+func seal(_ json: String) -> String {
+    guard let d = try? JSONSerialization.data(withJSONObject: ["p": json, "m": mac(json)]) else { return "" }
+    return String(decoding: d, as: UTF8.self)
+}
+
+/// The inner object if the message is signed with our key.
+func openSealed(_ sealed: Any?) -> [String: Any]? {
+    guard let sealed = sealed as? String, let d = sealed.data(using: .utf8),
+          let o = try? JSONSerialization.jsonObject(with: d) as? [String: String],
+          let p = o["p"], let m = o["m"], m.count == 64 else { return nil }
+    let expected = Array(mac(p).utf8), given = Array(m.utf8)
+    var diff: UInt8 = 0
+    for i in 0..<64 { diff |= expected[i] ^ given[i] }
+    guard diff == 0, let pd = p.data(using: .utf8) else { return nil }
+    return try? JSONSerialization.jsonObject(with: pd) as? [String: Any]
+}
 
 func send(_ payload: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: payload),
           let json = String(data: data, encoding: .utf8) else { return }
     DistributedNotificationCenter.default().postNotificationName(
-        .init("io.github.iamsumanp.peaky.notify"), object: json, userInfo: nil, deliverImmediately: true)
+        .init("io.github.iamsumanp.peaky.notify"), object: seal(json), userInfo: nil, deliverImmediately: true)
 }
 
 func usage() -> Never {
@@ -86,8 +128,7 @@ func waitForNotchDecision(id: String, key: String, timeout: TimeInterval) -> Str
     var acked = false
     var done = false
     let reply = center.addObserver(forName: .init("io.github.iamsumanp.peaky.reply"), object: nil, queue: nil) { n in
-        guard let json = n.object as? String, let data = json.data(using: .utf8),
-              let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any], o["id"] as? String == id else { return }
+        guard let o = openSealed(n.object), o["id"] as? String == id else { return }
         switch o["decision"] as? String {
         case "shown": acked = true
         case let d?: decision = d; done = true
@@ -96,8 +137,7 @@ func waitForNotchDecision(id: String, key: String, timeout: TimeInterval) -> Str
     }
     // Anything else about this session (it carried on, finished, a new prompt) means it was answered in Claude.
     let other = center.addObserver(forName: .init("io.github.iamsumanp.peaky.notify"), object: nil, queue: nil) { n in
-        guard let json = n.object as? String, let data = json.data(using: .utf8),
-              let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        guard let o = openSealed(n.object) else { return }
         let k = o["clear"] as? String ?? o["key"] as? String
         // (Claude Code's own "needs permission" Notification ~6 s later is the same wait, not an answer.)
         if k == key, o["kind"] as? String != "wait" { done = true }
@@ -123,6 +163,49 @@ var args = Array(CommandLine.arguments.dropFirst())
 guard let first = args.first else { usage() }
 
 switch first {
+case "watch":
+    // Started by Peaky at launch: `peaky-cli watch <pid> <app path>`. If Peaky crashes, open it again.
+    // "Crashed" = macOS wrote a crash report for it right then; Quit, pkill and Force Quit don't, so those
+    // stay closed. At most 3 restarts in 10 minutes, so a crash loop can't spin forever.
+    guard args.count >= 3, let pid = pid_t(args[1]) else { usage() }
+    let appPath = args[2]
+    let kq = kqueue()
+    var ev = kevent(ident: UInt(pid), filter: Int16(EVFILT_PROC), flags: UInt16(EV_ADD | EV_ONESHOT),
+                    fflags: NOTE_EXIT, data: 0, udata: nil)
+    guard kevent(kq, &ev, 1, nil, 0, nil) == 0 else { exit(0) }   // already gone
+    var out = kevent()
+    _ = kevent(kq, nil, 0, &out, 1, nil)
+    let exited = Date()
+
+    let fm = FileManager.default
+    let home = fm.homeDirectoryForCurrentUser
+    let reports = home.appendingPathComponent("Library/Logs/DiagnosticReports")
+    var crashed = false
+    for _ in 0..<20 where !crashed {   // reports appear within a second or two
+        Thread.sleep(forTimeInterval: 0.5)
+        let files = (try? fm.contentsOfDirectory(at: reports, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        crashed = files.contains { f in
+            f.lastPathComponent.hasPrefix("Peaky") && f.pathExtension == "ips" &&
+            ((try? f.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) > exited.addingTimeInterval(-3)
+        }
+    }
+    let logDir = home.appendingPathComponent("Library/Logs/Peaky")
+    try? fm.createDirectory(at: logDir, withIntermediateDirectories: true)
+    let log = logDir.appendingPathComponent("restarts.log")
+    guard crashed else { exit(0) }
+    let recent = ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n")
+        .compactMap { Double($0.split(separator: " ").first ?? "") }
+        .filter { Date().timeIntervalSince1970 - $0 < 600 }
+    guard recent.count < 3 else { exit(0) }
+    let line = "\(Date().timeIntervalSince1970) crashed (pid \(pid)), reopening\n"
+    if let h = try? FileHandle(forWritingTo: log) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }
+    else { try? line.write(to: log, atomically: true, encoding: .utf8) }
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    p.arguments = [appPath]
+    try? p.run()
+    p.waitUntilExit()
+
 case "run":
     let cmd = Array(args.dropFirst())
     guard !cmd.isEmpty else { usage() }

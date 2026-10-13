@@ -9,10 +9,7 @@ struct ClaudeAsk: Equatable {
     let summary: String   // "npm run build"
 
     func reply(_ decision: String) {
-        let o: [String: Any] = ["id": id, "decision": decision]
-        guard let data = try? JSONSerialization.data(withJSONObject: o), let json = String(data: data, encoding: .utf8) else { return }
-        DistributedNotificationCenter.default().postNotificationName(
-            .init("io.github.iamsumanp.peaky.reply"), object: json, userInfo: nil, deliverImmediately: true)
+        Channel.post(Channel.reply, ["id": id, "decision": decision])
     }
 
     func answer(allow: Bool) {
@@ -34,8 +31,9 @@ struct SessionFocus: Equatable {
 
     func go() {
         let app = app ?? ""
-        // Terminals: bring the exact tab forward.
-        if let tty {
+        // Terminals: bring the exact tab forward. The tty goes into AppleScript source, so only ever a plain
+        // "/dev/ttys012" — never text that could close the string and add commands.
+        if let tty, tty.range(of: #"^/dev/ttys[0-9]{1,4}$"#, options: .regularExpression) != nil {
             if app == "com.apple.Terminal", Self.run("""
                 tell application "Terminal"
                     repeat with w in windows

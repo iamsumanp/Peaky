@@ -473,7 +473,7 @@ final class IslandModel: ObservableObject {
     }
 
     func collapse() {
-        guard expanded else { return }
+        guard expanded, !ShelfCollectionView.quickLookVisible else { return }
         NotchPanel.giveBackAll()
         withAnimation(Self.close) {
             expanded = false

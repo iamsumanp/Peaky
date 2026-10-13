@@ -3,10 +3,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+[[ -f build.local.sh ]] && source build.local.sh
+
 APP=build/Peaky.app
+# Debug commands (tools/debug.sh) only with PEAKY_DEBUG=1, and never in a DMG for other people.
+FLAGS=()
+[[ ${PEAKY_DEBUG:-0} == 1 && ${1:-} != --dmg ]] && FLAGS=(-Xswiftc -DPEAKY_DEBUG) && echo "› debug build"
 echo "› compiling Swift…"
-swift build -c release 2>&1 | grep -vE "^(\[|Building|Compiling|Write|Planning)" || true
-BIN=$(swift build -c release --show-bin-path)/Peaky
+swift build -c release $FLAGS 2>&1 | grep -vE "^(\[|Building|Compiling|Write|Planning)" || true
+BIN=$(swift build -c release $FLAGS --show-bin-path)/Peaky
 [[ -x $BIN ]] || { echo "build failed"; exit 1; }
 
 mkdir -p build
@@ -37,7 +42,6 @@ cp build/peaky-cli $APP/Contents/MacOS/peaky-cli
 # Signing. With a self-signed certificate (tools/make-signing-cert.md) macOS keeps Peaky's Calendar /
 # Bluetooth / Accessibility permissions across rebuilds; without one it's signed ad-hoc. Override the
 # keychain / password / certificate name with PEAKY_SIGN_KEYCHAIN / _PASSWORD / _NAME, or in build.local.sh.
-[[ -f build.local.sh ]] && source build.local.sh
 KC=${PEAKY_SIGN_KEYCHAIN:-$HOME/Library/Keychains/peaky-signing.keychain-db}
 PW=${PEAKY_SIGN_PASSWORD:-peaky-local}
 CN=${PEAKY_SIGN_NAME:-Peaky Local Signing}

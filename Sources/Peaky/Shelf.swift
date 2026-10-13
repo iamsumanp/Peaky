@@ -1,10 +1,12 @@
 import AppKit
+import Quartz
 import SwiftUI
 
 // MARK: - Shelf
 
 /// The shelf tab of the open island: a bar (count, select all, drag, AirDrop, remove) over a Finder-like
-/// grid — scroll, ⌘A, click / ⇧ / ⌘-click, drag a box to select, Delete removes, drag out carries the selection.
+/// grid — scroll, ⌘A, click / ⇧ / ⌘-click, drag a box to select, Space for Quick Look, Delete removes,
+/// drag out carries the selection.
 struct ShelfView: View {
     @ObservedObject var model: IslandModel
     @ObservedObject var shelf = Services.shared.shelf
@@ -190,7 +192,10 @@ struct ShelfGrid: NSViewRepresentable {
 
         func collectionView(_ cv: NSCollectionView, itemForRepresentedObjectAt ip: IndexPath) -> NSCollectionViewItem {
             let cell = cv.makeItem(withIdentifier: ShelfCell.id, for: ip)
-            (cell as? ShelfCell)?.show(items[ip.item])
+            if let c = cell as? ShelfCell {
+                c.show(items[ip.item])
+                c.onRemove = { url in withAnimation { Services.shared.shelf.remove(url) } }
+            }
             return cell
         }
 
@@ -210,6 +215,33 @@ final class ShelfCollectionView: NSCollectionView {
     func selectionChanged() {
         let urls = Set(selectedURLs)
         DispatchQueue.main.async { [weak self] in self?.onSelection(urls) }
+        if quickLookOpen { QLPreviewPanel.shared().reloadData() }
+    }
+
+    // MARK: Quick Look (Space)
+
+    /// While Quick Look is up the island stays open (moving the mouse to the preview would otherwise close it).
+    static var quickLookVisible: Bool { QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible }
+    private var quickLookOpen = false
+
+    func toggleQuickLook() {
+        if Self.quickLookVisible { QLPreviewPanel.shared().orderOut(nil); return }
+        if selectionIndexPaths.isEmpty, !items().isEmpty { selectionIndexPaths = [IndexPath(item: 0, section: 0)] }
+        QLPreviewPanel.shared().makeKeyAndOrderFront(nil)
+    }
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        quickLookOpen = true
+        panel.dataSource = self
+        panel.delegate = self
+    }
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        quickLookOpen = false
+        panel.dataSource = nil
+        panel.delegate = nil
+        // Now the island may close if the mouse has moved away.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { AppDelegate.shared.controllers.forEach { $0.collapseIfMouseLeft() } }
     }
     override var selectionIndexPaths: Set<IndexPath> { didSet { selectionChanged() } }
     override func selectAll(_ sender: Any?) { super.selectAll(sender); selectionChanged() }
@@ -252,6 +284,7 @@ final class ShelfCollectionView: NSCollectionView {
         switch event.keyCode {
         case 51, 117: removeSelected()                       // Delete, Forward Delete
         case 53: deselectAll(nil)                            // Esc
+        case 49: toggleQuickLook()                           // Space
         case 36, 76: selectedURLs.forEach { NSWorkspace.shared.open($0) }   // Return
         default:
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "a" {
@@ -282,6 +315,7 @@ final class ShelfCollectionView: NSCollectionView {
         let n = urls.count
         return FileDragSource.menu([
             (n > 1 ? "Open \(n) Files" : "Open", { urls.forEach { NSWorkspace.shared.open($0) } }),
+            ("Quick Look", { [weak self] in self?.toggleQuickLook() }),
             ("Show in Finder", { NSWorkspace.shared.activateFileViewerSelecting(urls) }),
             (n > 1 ? "Remove \(n) from Shelf" : "Remove from Shelf", { [weak self] in self?.removeSelected() }),
             ("Select All", { [weak self] in self?.selectAll(nil) }),
@@ -289,13 +323,52 @@ final class ShelfCollectionView: NSCollectionView {
     }
 }
 
+extension ShelfCollectionView: QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { selectedURLs.count }
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        let urls = selectedURLs
+        return urls.indices.contains(index) ? urls[index] as NSURL : nil
+    }
+    /// Space / Esc inside the preview close it; arrows move through the selection.
+    func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
+        guard event.type == .keyDown else { return false }
+        if event.keyCode == 49 || event.keyCode == 53 { panel.orderOut(nil); return true }
+        return false
+    }
+}
+
+/// A tile's background view: tells the cell when the mouse is over it.
+final class ShelfCellView: NSView {
+    var onHover: (Bool) -> Void = { _ in }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { onHover(true) }
+    override func mouseExited(with event: NSEvent) { onHover(false) }
+}
+
 final class ShelfCell: NSCollectionViewItem {
     static let id = NSUserInterfaceItemIdentifier("ShelfCell")
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    private let removeButton = NSButton()
+    private var url: URL?
+    private var hovering = false { didSet { refresh() } }
+    var onRemove: (URL) -> Void = { _ in }
 
     override func loadView() {
-        let v = NSView()
+        let v = ShelfCellView()
+        v.onHover = { [weak self] in self?.hovering = $0 }
+        removeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove from Shelf")?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular).applying(.init(paletteColors: [.white, .systemGray])))
+        removeButton.isBordered = false
+        removeButton.imagePosition = .imageOnly
+        removeButton.target = self
+        removeButton.action = #selector(removeTapped)
+        removeButton.toolTip = "Remove from Shelf"
+        removeButton.isHidden = true
         v.wantsLayer = true
         v.layer?.cornerRadius = Theme.tileRadius
         icon.imageScaling = .scaleProportionallyUpOrDown
@@ -307,8 +380,16 @@ final class ShelfCell: NSCollectionViewItem {
         label.layer?.cornerRadius = 5
         v.addSubview(icon)
         v.addSubview(label)
+        v.addSubview(removeButton)
         view = v
         refresh()
+    }
+
+    @objc private func removeTapped() { if let url { onRemove(url) } }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        hovering = false
     }
 
     override func viewDidLayout() {
@@ -317,9 +398,11 @@ final class ShelfCell: NSCollectionViewItem {
         icon.frame = NSRect(x: (b.width - 32) / 2, y: b.height - 5 - 32, width: 32, height: 32)
         let w = min(b.width - 4, label.intrinsicContentSize.width + 8)
         label.frame = NSRect(x: (b.width - w) / 2, y: 4, width: w, height: 14)
+        removeButton.frame = NSRect(x: b.width - 17, y: b.height - 17, width: 16, height: 16)
     }
 
     func show(_ url: URL) {
+        self.url = url
         icon.image = NSWorkspace.shared.icon(forFile: url.path)
         label.stringValue = url.lastPathComponent
         view.toolTip = url.path
@@ -333,7 +416,9 @@ final class ShelfCell: NSCollectionViewItem {
         guard isViewLoaded else { return }
         let on = highlightState == .forSelection || (isSelected && highlightState != .forDeselection)
         let accent = NSColor(Theme.accent)
-        view.layer?.backgroundColor = on ? accent.withAlphaComponent(0.18).cgColor : NSColor.clear.cgColor
+        view.layer?.backgroundColor = on ? accent.withAlphaComponent(0.18).cgColor
+            : NSColor.white.withAlphaComponent(hovering ? 0.08 : 0).cgColor
+        removeButton.isHidden = !hovering
         label.layer?.backgroundColor = on ? accent.cgColor : NSColor.clear.cgColor
         label.textColor = on ? .black : NSColor.white.withAlphaComponent(0.8)
     }

@@ -8,7 +8,7 @@ enum Prefs {
     enum Key: String {
         case display, openOnHover, showMusicActivity, showHUD, hudReplace, pet
         case awakeDisplay, awakeDefault, awakeAtLaunch
-        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront
+        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates
     }
 
     static func register() {
@@ -22,6 +22,7 @@ enum Prefs {
             Key.claudeWaitSeconds.rawValue: 120,
             Key.claudeNotchApprove.rawValue: true,
             Key.claudeQuietWhenFront.rawValue: true,
+            Key.checkUpdates.rawValue: true,
             Key.showMusicActivity.rawValue: true,
             Key.showHUD.rawValue: true,
             Key.hudReplace.rawValue: false,
@@ -94,6 +95,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Prefs.register()
         Theme.registerBundledFonts()
         Services.shared.start()
+        Updater.shared.start()
+        startCrashWatcher()
         buildStatusItem()
         rebuildIslands()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -111,11 +114,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.locked = false
             self?.controllers.forEach { $0.setLocked(false) }
         }
-        // Debug hook so states can be previewed from a terminal:
+        #if PEAKY_DEBUG
+        // Debug hook so states can be previewed from a terminal (debug builds only — `PEAKY_DEBUG=1 ./build.sh`):
         //   swift -e 'import Foundation; DistributedNotificationCenter.default().postNotificationName(.init("io.github.iamsumanp.peaky.debug"), object: "expand", deliverImmediately: true)'
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
             DispatchQueue.main.async { AppDelegate.shared.controllers.first?.model.expand() }
         }, "io.github.iamsumanp.peaky.darwintest" as CFString, nil, .deliverImmediately)
+        #endif
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
             DispatchQueue.main.async { WakePort.shared.fire() }
         }, "io.github.iamsumanp.peaky.wake" as CFString, nil, .deliverImmediately)
@@ -123,12 +128,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let f = self?.pendingDebug { self?.pendingDebug = nil; f() }
             return e
         }
+        #if PEAKY_DEBUG
         DistributedNotificationCenter.default().addObserver(forName: .init("io.github.iamsumanp.peaky.debug"), object: nil, queue: .main) { [weak self] n in
             self?.debug(n.object as? String ?? "")
         }
-        // Alerts from the `peaky` command line tool (terminal jobs, Claude Code hooks).
-        DistributedNotificationCenter.default().addObserver(forName: .init("io.github.iamsumanp.peaky.notify"), object: nil, queue: .main) { n in
-            guard let json = n.object as? String else { return }
+        #endif
+        // Alerts from the `peaky` command line tool (terminal jobs, Claude Code hooks) — signed, see Channel.
+        Channel.prepare()
+        DistributedNotificationCenter.default().addObserver(forName: Channel.notify, object: nil, queue: .main) { n in
+            guard let json = Channel.open(n.object as? String) else { return }
             if let data = json.data(using: .utf8),
                let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let key = o["clear"] as? String {
@@ -180,8 +188,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Menu bar dropdown (today's meetings, like MeetingBar)
 
+    @objc private func openUpdate() { Updater.shared.openDownload() }
+
+    /// A tiny `peaky-cli watch` process that reopens Peaky if it crashes (see tools/peaky-cli.swift).
+    private func startCrashWatcher() {
+        let cli = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/peaky-cli")
+        guard FileManager.default.isExecutableFile(atPath: cli.path) else { return }
+        let p = Process()
+        p.executableURL = cli
+        p.arguments = ["watch", String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundlePath]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try? p.run()
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        let up = Updater.shared
+        if up.updateAvailable, let v = up.latestVersion {
+            let item = NSMenuItem(title: "Update available: Peaky \(v)…", action: #selector(openUpdate), keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: "arrow.down.app.fill", accessibilityDescription: nil)
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
         let cal = Services.shared.calendar
         let now = Date()
 
@@ -529,17 +559,6 @@ struct SettingsView: View {
                 Toggle("Charging & low battery", isOn: $notifyCharging)
                 Toggle("Bluetooth devices (AirPods…)", isOn: $notifyBluetooth)
                 Toggle("Meetings 5 minutes before they start", isOn: $notifyCalendar)
-                Picker("Claude “Needs permission” stays", selection: $claudeWait) {
-                    Text("30 seconds").tag(30.0)
-                    Text("1 minute").tag(60.0)
-                    Text("2 minutes").tag(120.0)
-                    Text("5 minutes").tag(300.0)
-                    Text("Until handled").tag(3600.0)
-                }
-                Toggle("Stay quiet while Claude's app is in front", isOn: $claudeQuiet)
-                    .help("No Claude alerts while you're looking at the app the session runs in (the Claude app, that Terminal, that editor). If you switch away while Claude still needs you, it shows up in the notch then.")
-                Toggle("Allow / Deny Claude from the notch", isOn: $claudeApprove)
-                    .help("For Claude in the Claude app: approve or refuse a permission request from the open island. Claude's own prompt still works too; whichever you answer first counts.")
                 HStack {
                     Text("Calendar")
                     Spacer()
@@ -555,6 +574,21 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Claude Code") {
+                ClaudeHooksRow()
+                Picker("“Needs permission” stays", selection: $claudeWait) {
+                    Text("30 seconds").tag(30.0)
+                    Text("1 minute").tag(60.0)
+                    Text("2 minutes").tag(120.0)
+                    Text("5 minutes").tag(300.0)
+                    Text("Until handled").tag(3600.0)
+                }
+                Toggle("Stay quiet while Claude's app is in front", isOn: $claudeQuiet)
+                    .help("No Claude alerts while you're looking at the app the session runs in (the Claude app, that Terminal, that editor). If you switch away while Claude still needs you, it shows up in the notch then.")
+                Toggle("Allow / Deny Claude from the notch", isOn: $claudeApprove)
+                    .help("For Claude in the Claude app: approve or refuse a permission request from the open island. Claude's own prompt still works too; whichever you answer first counts.")
+            }
+
             Section("General") {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) {
@@ -565,8 +599,9 @@ struct SettingsView: View {
                             launchAtLogin = SMAppService.mainApp.status == .enabled
                         }
                     }
+                UpdateRow()
                 HStack {
-                    Text("Peaky 1.0 · gestures: click or swipe down to open, swipe up to close, two-finger swipe sideways to skip tracks.")
+                    Text("Gestures: click or swipe down to open, swipe up to close, two-finger swipe sideways to skip tracks.")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Quit") { NSApp.terminate(nil) }
