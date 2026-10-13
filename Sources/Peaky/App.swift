@@ -97,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Services.shared.start()
         Updater.shared.start()
         startCrashWatcher()
+        IslandMenu.start()
         buildStatusItem()
         rebuildIslands()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
@@ -320,6 +321,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let m = controllers.first?.model
         switch cmd {
         case "expand": m?.expand(tab: .home)
+        case "menutest":
+            // A menu opens over the island, the mouse "leaves", the island must stay; then the menu closes.
+            let menu = NSMenu()
+            NotificationCenter.default.post(name: NSMenu.didBeginTrackingNotification, object: menu)
+            m?.collapse()
+            let during = m?.expanded ?? false
+            NotificationCenter.default.post(name: NSMenu.didEndTrackingNotification, object: menu)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                try? "during=\(during) after=\(m?.expanded ?? false)".write(toFile: "/tmp/peaky-menu.txt", atomically: true, encoding: .utf8)
+            }
         case "shelfall", "shelfwheel", "shelfgive", "shelfkey", "shelfhit":
             // Debug the shelf grid without touching the mouse; result in /tmp/peaky-shelf.txt.
             guard let panel = controllers.first?.panel, let root = panel.contentView else { return }

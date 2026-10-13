@@ -96,8 +96,12 @@ final class NotchController {
     /// After something kept the island open (Quick Look): close it if the mouse is no longer over it.
     func collapseIfMouseLeft() {
         updateMouse()
-        if model.expanded, !hitRect.contains(mouse) { model.collapse() }
+        if model.expanded, !shelfSticky, !hitRect.contains(mouse) { model.collapse() }
     }
+
+    /// The shelf (with files on it) is a workspace — select, drag into other apps, come back — so it doesn't
+    /// close when the mouse wanders off, only on a click outside, Esc, or a swipe up.
+    private var shelfSticky: Bool { model.expanded && model.tab == .shelf && model.shelfCount > 0 }
 
     /// Debug only: the notch centre in screen coordinates.
     var notchCentre: CGPoint { CGPoint(x: screen.frame.midX, y: screen.frame.maxY - 10) }
@@ -153,7 +157,7 @@ final class NotchController {
             .filter { $0 }
             .sink { [weak self] _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                    guard let self, self.model.expanded, !self.model.hovering else { return }
+                    guard let self, self.model.expanded, !self.model.hovering, !self.shelfSticky else { return }
                     self.model.collapse()
                 }
             }
@@ -263,6 +267,13 @@ final class NotchController {
             // Must NOT return nil: AppKit runs its display pass after dispatching an event, and a swallowed
             // event skipped it — the island opened in the model but was only drawn once you moved away.
             return e
+        }) {
+            monitors.append(m)
+        }
+        // Clicks in other apps: the sticky shelf closes on a click anywhere outside it.
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown], handler: { [weak self] _ in
+            guard let self, self.shelfSticky, !self.hitRect.contains(self.mouse) else { return }
+            self.model.collapse()
         }) {
             monitors.append(m)
         }
@@ -392,8 +403,8 @@ final class NotchController {
             hoverOpenWork?.cancel()
             if model.expanded {
                 let w = DispatchWorkItem { [weak self] in
-                    // Re-check the real cursor: only close if it is still outside.
-                    guard let self, !self.model.hovering, !self.hitRect.contains(mouse) else { return }
+                    // Re-check the real cursor: only close if it is still outside. The shelf waits for a click.
+                    guard let self, !self.shelfSticky, !self.model.hovering, !self.hitRect.contains(mouse) else { return }
                     self.model.collapse()
                 }
                 leaveWork = w

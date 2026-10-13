@@ -207,9 +207,10 @@ struct PetSpriteView: NSViewRepresentable {
                 a.calculationMode = .discrete
                 a.repeatCount = .infinity
                 if asleep {
-                    // Slow breathing with a "z" drifting up.
+                    // Asleep: perfectly still (the old breathing dropped the ears' row and read as twitching);
+                    // only a faint "z" drifts up now and then.
                     a.values = (0..<8).map { frames["sleep\($0)"]! }
-                    a.duration = 2.4
+                    a.duration = 4.8
                 } else {
                     // 18 steps of 0.25 s: blink once, swish the tail once.
                     var seq = Array(repeating: frames["idle"]!, count: 18)
@@ -261,7 +262,7 @@ struct PetSpriteView: NSViewRepresentable {
             f["blink"] = image(fidget: false, eyesClosed: true, squash: false, z: nil)
             f["fidget"] = image(fidget: true, eyesClosed: false, squash: false, z: nil)
             for i in 0..<8 {
-                f["sleep\(i)"] = image(fidget: false, eyesClosed: true, squash: i % 4 >= 2, z: i < 4 ? i : nil)
+                f["sleep\(i)"] = image(fidget: false, eyesClosed: true, squash: false, z: i < 4 ? i : nil)
             }
             return f
         }

@@ -283,7 +283,9 @@ final class ShelfCollectionView: NSCollectionView {
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 51, 117: removeSelected()                       // Delete, Forward Delete
-        case 53: deselectAll(nil)                            // Esc
+        case 53:                                             // Esc: deselect, then close
+            if selectionIndexPaths.isEmpty { AppDelegate.shared.controllers.forEach { $0.model.collapse() } }
+            else { deselectAll(nil) }
         case 49: toggleQuickLook()                           // Space
         case 36, 76: selectedURLs.forEach { NSWorkspace.shared.open($0) }   // Return
         default:
@@ -304,6 +306,10 @@ final class ShelfCollectionView: NSCollectionView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         takeKeyboard()
+        return buildMenu(for: event)
+    }
+
+    private func buildMenu(for event: NSEvent) -> NSMenu {
         guard let ip = indexPathForItem(at: convert(event.locationInWindow, from: nil)) else {
             return FileDragSource.menu([("Select All", { [weak self] in self?.selectAll(nil) })])
         }
@@ -421,6 +427,27 @@ final class ShelfCell: NSCollectionViewItem {
         removeButton.isHidden = !hovering
         label.layer?.backgroundColor = on ? accent.cgColor : NSColor.clear.cgColor
         label.textColor = on ? .black : NSColor.white.withAlphaComponent(0.8)
+    }
+}
+
+/// A right-click menu hangs outside the island, so moving onto it looked like leaving and the island closed
+/// under the menu. While one is open the island stays; when it closes, it may close if the mouse has gone.
+enum IslandMenu {
+    private static var open = 0
+    static var isOpen: Bool { open > 0 }
+
+    /// Watches every menu Peaky shows (the shelf's, the ☕ button's durations, the menu-bar one).
+    static func start() {
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { _ in open += 1 }
+        nc.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { _ in
+            open = max(0, open - 1)
+            // After the chosen item has run (Quick Look keeps the island open by itself).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                guard !isOpen else { return }
+                AppDelegate.shared.controllers.forEach { $0.collapseIfMouseLeft() }
+            }
+        }
     }
 }
 
