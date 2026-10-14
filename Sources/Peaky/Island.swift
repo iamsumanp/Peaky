@@ -335,7 +335,8 @@ final class IslandModel: ObservableObject {
         // Your own key press always answers right away, over music and over alerts; an alert carries on after.
         if hud != nil { return .hud }
         if notice != nil { return .notice }
-        if musicActive { return hovering ? .peek : .music }
+        // With "Open instantly on hover" off, hovering music doesn't grow either; a click opens the player.
+        if musicActive { return hovering && Prefs.bool(.openOnHover) ? .peek : .music }
         if status != nil { return .status }
         if pet != .none { return .pet }
         return .idle
