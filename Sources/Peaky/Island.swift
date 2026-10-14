@@ -332,8 +332,9 @@ final class IslandModel: ObservableObject {
 
     var presentation: Presentation {
         if expanded { return .expanded }
-        if notice != nil { return .notice }
+        // Your own key press always answers right away, over music and over alerts; an alert carries on after.
         if hud != nil { return .hud }
+        if notice != nil { return .notice }
         if musicActive { return hovering ? .peek : .music }
         if status != nil { return .status }
         if pet != .none { return .pet }
