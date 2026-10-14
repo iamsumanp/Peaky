@@ -145,6 +145,12 @@ final class NowPlaying: ObservableObject {
         }
     }
 
+    private var artworkHash = 0
+
+    private func update<T: Equatable>(_ key: ReferenceWritableKeyPath<NowPlaying, T>, _ value: T) {
+        if self[keyPath: key] != value { self[keyPath: key] = value }
+    }
+
     private func apply(_ o: [String: Any]) {
         if let err = o["error"] as? String { NSLog("Peaky media helper: \(err)"); return }
 
@@ -161,12 +167,15 @@ final class NowPlaying: ObservableObject {
         }
         let trackChanged = newTitle != title
 
-        title = newTitle
-        artist = o["artist"] as? String ?? ""
-        album = o["album"] as? String ?? ""
-        duration = o["duration"] as? Double ?? 0
+        // Players report several times a second while playing. Only touch what really changed: every
+        // assignment to a @Published value redraws the island (the artwork and icon especially), which
+        // kept Peaky at ~2 % CPU doing nothing visible.
+        update(\.title, newTitle)
+        update(\.artist, o["artist"] as? String ?? "")
+        update(\.album, o["album"] as? String ?? "")
+        update(\.duration, o["duration"] as? Double ?? 0)
         rate = o["rate"] as? Double ?? 0
-        isPlaying = playing && !newTitle.isEmpty
+        update(\.isPlaying, playing && !newTitle.isEmpty)
         updateRecency()
 
         let elapsed = o["elapsed"] as? Double ?? 0
@@ -178,18 +187,25 @@ final class NowPlaying: ObservableObject {
             snapshotDate = Date()
         }
 
-        if let b64 = o["artwork"] as? String, let data = Data(base64Encoded: b64), let img = NSImage(data: data) {
-            artwork = img
-            accent = Color(nsColor: Self.accentColor(of: img))
-        } else if o["noArtwork"] != nil, trackChanged || newTitle.isEmpty {
+        if let b64 = o["artwork"] as? String {
+            // Same picture again (the usual case): don't decode it, don't redraw it.
+            if b64.hashValue != artworkHash, let data = Data(base64Encoded: b64), let img = NSImage(data: data) {
+                artworkHash = b64.hashValue
+                artwork = img
+                accent = Color(nsColor: Self.accentColor(of: img))
+            }
+        } else if o["noArtwork"] != nil, trackChanged || newTitle.isEmpty, artwork != nil {
+            artworkHash = 0
             artwork = nil
             accent = .white
         }
 
         if let app {
-            appBundleID = app.bundleIdentifier
-            appIcon = app.icon
-        } else if newTitle.isEmpty {
+            if app.bundleIdentifier != appBundleID || appIcon == nil {
+                appBundleID = app.bundleIdentifier
+                appIcon = app.icon
+            }
+        } else if newTitle.isEmpty, appBundleID != nil || appIcon != nil {
             appBundleID = nil
             appIcon = nil
         }

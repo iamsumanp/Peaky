@@ -115,6 +115,14 @@ import Testing
         #expect(CalendarService.upNext(today: [ended, next], upcoming: [next], now: day)?.title == "Standup")
     }
 
+    @Test func hiddenMeetingCountsAsOverFromWhenItWasHidden() {
+        // Left a 2-hour call 5 minutes in; the next meeting is in 40 minutes → show it now.
+        let call = event("Long call", from: -5, to: 115), next = event("Standup", from: 40, to: 55)
+        #expect(CalendarService.upNext(today: [call, next], upcoming: [call, next], now: day) == nil)
+        #expect(CalendarService.upNext(today: [call, next], upcoming: [call, next], now: day,
+                                       hidden: ["Long call": day])?.title == "Standup")
+    }
+
     @Test func nothingBeforeTheFirstMeetingOfTheDay() {
         let next = event("Standup", from: 25, to: 40)
         #expect(CalendarService.upNext(today: [next], upcoming: [next], now: day) == nil)

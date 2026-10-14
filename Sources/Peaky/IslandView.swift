@@ -382,6 +382,13 @@ struct StatusLine: View {
                 .contentShape(Rectangle())
                 .onTapGesture { item.open() }
             Spacer(minLength: 6)
+            if item.kind == .meeting {
+                ChipButton(label: "Hide", filled: false) {
+                    let cal = Services.shared.calendar
+                    if let e = cal.agenda ?? cal.upNext { withAnimation(IslandModel.spring) { cal.hide(e) } }
+                }
+                .help("Hide this meeting from the notch (left early?). It stays in your calendar.")
+            }
             if let label = item.actionLabel {
                 ChipButton(label: label, filled: true) { item.open() }
             }
@@ -538,7 +545,7 @@ struct ExpandedView: View {
                 switch model.tab {
                 case .home:
                     VStack(spacing: 6) {
-                        PlayerRow()
+                        PlayerRow(open: model.expanded)
                         if model.showsStatusLine, let s = model.status { StatusLine(item: s) }
                     }
                 case .shelf: ShelfView(model: model)
@@ -553,13 +560,15 @@ struct ExpandedView: View {
 }
 
 struct PlayerRow: View {
+    /// The open island is always laid out (only faded), so anything that ticks must stop while it's closed.
+    var open = true
     @ObservedObject var np = Services.shared.nowPlaying
 
     var body: some View {
         if np.hasMedia {
             VStack(spacing: 6) {
                 player
-                if np.duration > 1 { Scrubber() }
+                if np.duration > 1 { Scrubber(ticking: open) }
             }
         } else {
             IdleRow()
@@ -597,14 +606,15 @@ struct PlayerRow: View {
 
 /// `1:12 ━━━━●──── 3:45` — how far into the track; click or drag to jump.
 struct Scrubber: View {
+    /// Only while the island is open: a hidden bar ticking twice a second cost ~1–2 % CPU all day.
+    var ticking = true
     @ObservedObject var np = Services.shared.nowPlaying
     /// While dragging: where the knob is (0…1); the track only seeks when you let go.
     @State private var dragging: Double?
     @State private var hover = false
 
     var body: some View {
-        // Ticks only while the open island is on screen.
-        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+        TimelineView(.animation(minimumInterval: 0.5, paused: !ticking)) { ctx in
             let d = max(np.duration, 1)
             let f = dragging ?? min(max(np.elapsed(at: ctx.date) / d, 0), 1)
             HStack(spacing: 8) {
@@ -717,8 +727,8 @@ struct IdleRow: View {
             }
             .frame(width: 40)
             Group {
-                if let e = cal.events.first {
-                    EventRow(event: e)
+                if let e = cal.events.first(where: { !cal.isHidden($0) }) {
+                    EventRow(event: e, onHide: e.soonOrNow ? { withAnimation(IslandModel.spring) { cal.hide(e) } } : nil)
                 } else if !cal.authorized && !cal.denied {
                     Button("Connect Calendar") { cal.requestAccess() }
                         .buttonStyle(.plain)
@@ -868,6 +878,9 @@ struct MarqueeText: View {
 
 struct EventRow: View {
     let event: CalEvent
+    /// For the meeting that's on now (or about to be): hide it from the notch, e.g. after leaving early.
+    var onHide: (() -> Void)? = nil
+    @State private var hover = false
 
     private var timeText: String {
         let cal = Calendar.current
@@ -886,6 +899,21 @@ struct EventRow: View {
                 Text(event.title).font(Theme.title(12)).foregroundStyle(.white).lineLimit(1)
                 Text(timeText).font(Theme.mono(10)).foregroundStyle(.white.opacity(0.5)).lineLimit(1)
             }
+            if let onHide {
+                Button(action: onHide) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.white.opacity(hover ? 0.9 : 0.45))
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(Color.white.opacity(hover ? 0.16 : 0.08)))
+                }
+                .buttonStyle(.plain)
+                .onHover { hover = $0 }
+                .help("Hide from the notch (left early?). It stays in your calendar.")
+            }
+        }
+        .contextMenu {
+            if let onHide { Button("Hide from the Notch", action: onHide) }
         }
     }
 }

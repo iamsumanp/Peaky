@@ -270,7 +270,33 @@ final class CalendarService: ObservableObject {
     private var announcedJoin: Set<String> = []
 
     /// The meeting to offer a Join button for, if any.
-    var joinable: CalEvent? { events.first { $0.joinableNow } }
+    var joinable: CalEvent? { events.first { $0.joinableNow && !isHidden($0) } }
+
+    // MARK: Hidden meetings
+    //
+    // Left a call early? Hide it and the notch stops counting down to its scheduled end. Only the notch:
+    // the calendar is untouched and the menu bar's Today list still shows it. Remembered until the day is over.
+
+    @Published private(set) var hidden: [String: Date] = {
+        let raw = UserDefaults.standard.dictionary(forKey: "hiddenMeetings") as? [String: Double] ?? [:]
+        let since = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
+        return raw.filter { $0.value >= since }.mapValues { Date(timeIntervalSince1970: $0) }
+    }()
+
+    func isHidden(_ e: CalEvent) -> Bool { hidden[e.id] != nil }
+
+    func hide(_ e: CalEvent) {
+        hidden[e.id] = Date()
+        UserDefaults.standard.set(hidden.mapValues(\.timeIntervalSince1970), forKey: "hiddenMeetings")
+    }
+
+    func unhideAll() {
+        hidden.removeAll()
+        UserDefaults.standard.removeObject(forKey: "hiddenMeetings")
+    }
+
+    /// A hidden meeting that would otherwise still be on screen (for "Show … again" in the menu).
+    var hiddenCurrent: CalEvent? { events.first { $0.soonOrNow && isHidden($0) } }
 
     /// Debug: pretend there is a meeting `startsIn` seconds from now lasting `length` seconds.
     func debugFake(title: String, startsIn: TimeInterval, length: TimeInterval) {
@@ -292,17 +318,23 @@ final class CalendarService: ObservableObject {
     }
 
     /// The meeting shown beside the notch while idle: starting within 15 minutes, or in progress.
-    var agenda: CalEvent? { events.first { $0.soonOrNow } }
+    var agenda: CalEvent? { events.first { $0.soonOrNow && !isHidden($0) } }
 
     /// Right after a meeting ends: the next one ("Next: Standup · in 25 mins") instead of nothing. Shown all the
     /// way to its start when it's within the hour; otherwise just for 5 minutes after the last one ends.
-    var upNext: CalEvent? { Self.upNext(today: today, upcoming: events, now: Date()) }
+    var upNext: CalEvent? { Self.upNext(today: today, upcoming: events, now: Date(), hidden: hidden) }
 
-    static func upNext(today: [CalEvent], upcoming: [CalEvent], now: Date) -> CalEvent? {
-        guard let last = today.filter({ !$0.allDay && $0.end <= now }).max(by: { $0.end < $1.end }),
-              let next = upcoming.first(where: { !$0.allDay && $0.start > now }),
+    /// A hidden meeting counts as over from the moment you hid it.
+    static func upNext(today: [CalEvent], upcoming: [CalEvent], now: Date, hidden: [String: Date] = [:]) -> CalEvent? {
+        let ended = today.compactMap { e -> Date? in
+            guard !e.allDay else { return nil }
+            if let h = hidden[e.id] { return min(h, e.end) }
+            return e.end <= now ? e.end : nil
+        }
+        guard let lastEnd = ended.max(),
+              let next = upcoming.first(where: { !$0.allDay && $0.start > now && hidden[$0.id] == nil }),
               Calendar.current.isDate(next.start, inSameDayAs: now) else { return nil }
-        return next.start.timeIntervalSince(last.end) <= 3600 || now.timeIntervalSince(last.end) < 300 ? next : nil
+        return next.start.timeIntervalSince(lastEnd) <= 3600 || now.timeIntervalSince(lastEnd) < 300 ? next : nil
     }
 
     func start() {

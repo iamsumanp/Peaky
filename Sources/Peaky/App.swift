@@ -191,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu bar dropdown (today's meetings, like MeetingBar)
 
     @objc private func openUpdate() { Updater.shared.openDownload() }
+    @objc private func unhideMeetings() { Services.shared.calendar.unhideAll() }
 
     /// A tiny `peaky-cli watch` process that reopens Peaky if it crashes (see tools/peaky-cli.swift).
     private func startCrashWatcher() {
@@ -216,6 +217,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let cal = Services.shared.calendar
         let now = Date()
+        if let h = cal.hiddenCurrent {
+            let item = NSMenuItem(title: "Show “\(h.title)” in the Notch Again", action: #selector(unhideMeetings), keyEquivalent: "")
+            item.target = self
+            item.image = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)
+            menu.addItem(item)
+            menu.addItem(.separator())
+        }
 
         if cal.authorized {
             if let next = cal.events.first(where: { !$0.allDay && $0.joinURL != nil && $0.end > now
@@ -322,6 +330,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let m = controllers.first?.model
         switch cmd {
         case "expand": m?.expand(tab: .home)
+        case "hidemeeting":
+            let cal = Services.shared.calendar
+            if let e = cal.agenda { cal.hide(e) }
         case "captureon", "captureoff":
             // Debug screenshots: let the island be captured (or hide it again) without touching the setting.
             NSApp.windows.compactMap { $0 as? NotchPanel }.forEach { $0.sharingType = cmd == "captureon" ? .readOnly : .none }
