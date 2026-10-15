@@ -360,7 +360,7 @@ final class IslandModel: ObservableObject {
         case .music:
             // With something important on the left, music keeps only its bars on the right.
             if status != nil { return CGSize(width: n.width + statusLeftEar + Self.musicRightEar(h) + cup, height: h) }
-            return CGSize(width: n.width + Self.musicEar(h) * 2 + cup, height: h)
+            return CGSize(width: n.width + Self.musicLeftEar(h) + Self.musicBarsEar + cup, height: h)
         case .peek:
             return CGSize(width: max(n.width + 230, geo.isVirtual ? 340 : 420),
                           height: h + 50 + (showsStatusLine ? statusLineH : 0))
@@ -399,10 +399,15 @@ final class IslandModel: ObservableObject {
 
     // MARK: Ear widths (the visible parts left and right of the hardware notch)
 
-    static func musicEar(_ h: CGFloat) -> CGFloat { h + 6 }
+    /// Space between the hardware notch and the nearest content in the compact states: content hugs the
+    /// notch, the outer padding keeps it clear of the rounded ends.
+    static let innerGap: CGFloat = 6
     static func artSize(_ h: CGFloat) -> CGFloat { h - (h > 30 ? 14 : 8) }
+    /// Music alone: artwork on the left, bars on the right.
+    static func musicLeftEar(_ h: CGFloat) -> CGFloat { 10 + artSize(h) + innerGap }
+    static let musicBarsEar: CGFloat = innerGap + 17 + 12
     /// Artwork + bars on the right when the left side shows a status.
-    static func musicRightEar(_ h: CGFloat) -> CGFloat { 7 + artSize(h) + 7 + 17 + 12 }
+    static func musicRightEar(_ h: CGFloat) -> CGFloat { innerGap + artSize(h) + 7 + 17 + 12 }
     static let hudEar: CGFloat = 78
     static let noticeTitleFont = Theme.nsTitle(12)
     static let noticeDetailFont = Theme.nsBody(11.5)
@@ -430,7 +435,9 @@ final class IslandModel: ObservableObject {
         case .pet: return Self.petEar / 2
         case .status: return (statusRightEar - statusLeftEar) / 2
         case .music:
-            return status == nil ? cup / 2 : (Self.musicRightEar(geo.notch.height) + cup - statusLeftEar) / 2
+            let h = geo.notch.height
+            return status == nil ? (Self.musicBarsEar + cup - Self.musicLeftEar(h)) / 2
+                                 : (Self.musicRightEar(h) + cup - statusLeftEar) / 2
         default: return 0
         }
     }
@@ -457,7 +464,7 @@ final class IslandModel: ObservableObject {
         let lead: CGFloat = s.symbol != nil ? 16 + 6 : 3 + 7
         let t = min((s.title as NSString).size(withAttributes: [.font: Self.agendaTitleFont]).width, s.titleMax)
         let d = statusSplit ? 0 : 5 + (("· " + s.detail) as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width
-        return (12 + lead + t + d + 12).rounded(.up)
+        return (12 + lead + t + d + Self.innerGap).rounded(.up)
     }
 
     /// Right of the notch: the time ("13 mins left") for a meeting / Claude — no pet then — or the pet
@@ -465,7 +472,7 @@ final class IslandModel: ObservableObject {
     var statusRightEar: CGFloat {
         guard let s = status else { return 0 }
         if s.kind == .awake { return pet != .none ? Self.petEar : 0 }
-        let d = statusSplit ? (s.detail as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width + 24 : 0
+        let d = statusSplit ? (s.detail as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width + Self.innerGap + 12 : 0
         return (d + cup).rounded(.up)
     }
 
