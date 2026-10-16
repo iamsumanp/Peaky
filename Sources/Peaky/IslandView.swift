@@ -178,15 +178,11 @@ struct MusicLiveView: View {
                     .padding(.leading, 10)
             }
             Spacer(minLength: 0)
-            // With the left side taken, the artwork moves right, next to the bars.
-            if model.status != nil {
-                ArtworkView(image: np.artwork, size: IslandModel.artSize(height))
-                    .padding(.trailing, 7)
-            }
+            // With the left side taken, music is just its bars (and no cup): two things, each at its smallest.
             Visualizer(playing: np.isPlaying, color: .white)
                 .frame(width: 17, height: height * 0.38)
                 .padding(.trailing, 12)
-            if model.caffeinated { CupBadge() }
+            if model.caffeinated, model.status == nil { CupBadge() }
         }
         .frame(height: height)
     }
@@ -321,7 +317,7 @@ struct StatusSlot: View {
                 .frame(maxWidth: item.titleMax, alignment: .leading)
                 .fixedSize(horizontal: true, vertical: false)
             if showDetail {
-                Text("· " + item.detail)
+                Text("· " + (item.inline ?? item.detail))
                     .font(Font(IslandModel.agendaDetailFont))
                     .foregroundStyle(item.tint)
                     .lineLimit(1)

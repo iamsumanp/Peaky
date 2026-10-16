@@ -175,6 +175,13 @@ import Testing
         #expect(CalEvent.span(1) == "1 min")
     }
 
+    @Test func shortSpansForTheCollapsedNotch() {
+        #expect(CalEvent.spanShort(62 * 60) == "1h 2m")
+        #expect(CalEvent.spanShort(10 * 60) == "10m")
+        #expect(CalEvent.spanShort(120 * 60) == "2h")
+        #expect(CalEvent.spanShort(1) == "1m")
+    }
+
     @Test func trackTimes() {
         #expect(Scrubber.time(0) == "0:00")
         #expect(Scrubber.time(75.9) == "1:15")

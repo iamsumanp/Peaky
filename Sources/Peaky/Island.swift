@@ -78,6 +78,8 @@ struct StatusItem: Equatable {
     /// What the Join / Open button does.
     let openURL: URL?
     let actionLabel: String?
+    /// A shorter detail for when it sits right after the title (next to music): "1h 2m" instead of "1h 2m left".
+    var inline: String? = nil
     var ask: ClaudeAsk? = nil
     var focus: SessionFocus? = nil
 
@@ -234,7 +236,8 @@ final class IslandModel: ObservableObject {
             let many = visibleWork.count > 1
             return StatusItem(kind: .working, title: many ? "Claude · \(visibleWork.count) sessions" : w.title,
                               detail: "working" + time, tint: Color(hex: 0xD97757).opacity(0.8), bar: nil,
-                              symbol: "claude-spin", openURL: nil, actionLabel: "Open", focus: w.focus)
+                              symbol: "claude-spin", openURL: nil, actionLabel: "Open",
+                              inline: mins < 1 ? "working" : String(time.dropFirst(3)), focus: w.focus)
         }
         if let e = agenda { return meetingItem(e) }
         // Keep Awake takes the left side only when it's free (music puts its artwork there) and a pet
@@ -252,7 +255,7 @@ final class IslandModel: ObservableObject {
         let next = !e.soonOrNow
         return StatusItem(kind: .meeting, title: next ? "Next: " + e.title : e.title, detail: agendaText,
                           tint: e.isNow ? Theme.accent : .white.opacity(0.6), bar: e.color, symbol: nil,
-                          openURL: e.joinURL, actionLabel: e.joinURL == nil ? nil : "Join")
+                          openURL: e.joinURL, actionLabel: e.joinURL == nil ? nil : "Join", inline: e.relativeTiny)
     }
 
     /// The status gets its own line in the peek / open panel — except a meeting in the idle panel,
@@ -353,7 +356,7 @@ final class IslandModel: ObservableObject {
     private func refreshAgenda() {
         let cal = Services.shared.calendar
         let e = cal.agenda ?? cal.upNext
-        let text = e?.relative ?? ""
+        let text = e?.relativeShort ?? ""
         guard e != agenda || text != agendaText else { return }
         withAnimation(Self.spring) {
             agenda = e
@@ -404,7 +407,8 @@ final class IslandModel: ObservableObject {
             return geo.hasNotch ? CGSize(width: n.width + Self.petEar, height: h) : CGSize(width: Self.petEar + 12, height: h)
         case .music:
             // With something important on the left, music keeps only its bars on the right.
-            if status != nil { return CGSize(width: n.width + statusLeftEar + Self.musicRightEar(h) + cup, height: h) }
+            // Music next to a status: just the bars (no artwork, no cup) — two things, each at its smallest.
+            if status != nil { return CGSize(width: n.width + statusLeftEar + Self.musicBarsEar, height: h) }
             return CGSize(width: n.width + Self.musicLeftEar(h) + Self.musicBarsEar + cup, height: h)
         case .peek:
             return CGSize(width: max(n.width + 230, geo.isVirtual ? 340 : 420),
@@ -451,8 +455,6 @@ final class IslandModel: ObservableObject {
     /// Music alone: artwork on the left, bars on the right.
     static func musicLeftEar(_ h: CGFloat) -> CGFloat { 10 + artSize(h) + innerGap }
     static let musicBarsEar: CGFloat = innerGap + 17 + 12
-    /// Artwork + bars on the right when the left side shows a status.
-    static func musicRightEar(_ h: CGFloat) -> CGFloat { innerGap + artSize(h) + 7 + 17 + 12 }
     static let hudEar: CGFloat = 78
     static let noticeTitleFont = Theme.nsTitle(12)
     static let noticeDetailFont = Theme.nsBody(11.5)
@@ -482,7 +484,7 @@ final class IslandModel: ObservableObject {
         case .music:
             let h = geo.notch.height
             return status == nil ? (Self.musicBarsEar + cup - Self.musicLeftEar(h)) / 2
-                                 : (Self.musicRightEar(h) + cup - statusLeftEar) / 2
+                                 : (Self.musicBarsEar - statusLeftEar) / 2
         default: return 0
         }
     }
@@ -508,7 +510,7 @@ final class IslandModel: ObservableObject {
         if s.kind == .awake { return Self.petEar }
         let lead: CGFloat = s.symbol != nil ? 16 + 6 : 3 + 7
         let t = min((s.title as NSString).size(withAttributes: [.font: Self.agendaTitleFont]).width, s.titleMax)
-        let d = statusSplit ? 0 : 5 + (("· " + s.detail) as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width
+        let d = statusSplit ? 0 : 5 + (("· " + (s.inline ?? s.detail)) as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width
         return (12 + lead + t + d + Self.innerGap).rounded(.up)
     }
 

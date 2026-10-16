@@ -247,6 +247,23 @@ struct CalEvent: Identifiable, Equatable {
         isNow ? Self.span(end.timeIntervalSinceNow) + " left" : "in " + Self.span(start.timeIntervalSinceNow)
     }
 
+    /// For the collapsed notch: "1h 2m left", "in 10m".
+    var relativeShort: String {
+        isNow ? Self.spanShort(end.timeIntervalSinceNow) + " left" : "in " + Self.spanShort(start.timeIntervalSinceNow)
+    }
+
+    /// Next to music, where every point counts: "1h 2m", "in 10m".
+    var relativeTiny: String {
+        isNow ? Self.spanShort(end.timeIntervalSinceNow) : "in " + Self.spanShort(start.timeIntervalSinceNow)
+    }
+
+    /// 62 min → "1h 2m", 10 → "10m", 120 → "2h".
+    static func spanShort(_ seconds: TimeInterval) -> String {
+        let m = max(1, Int((seconds / 60).rounded(.up)))
+        if m < 60 { return "\(m)m" }
+        return m % 60 == 0 ? "\(m / 60)h" : "\(m / 60)h \(m % 60)m"
+    }
+
     /// 62 min → "1 hr 2 mins", 10 → "10 mins", 1 → "1 min", 120 → "2 hrs".
     static func span(_ seconds: TimeInterval) -> String {
         let m = max(1, Int((seconds / 60).rounded(.up)))
