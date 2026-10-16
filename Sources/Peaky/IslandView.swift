@@ -94,7 +94,7 @@ struct IslandView: View {
                     StatusLiveView(model: model, height: h, active: p == .status)
                 }
                 layer(p == .music, size: model.size(for: .music)) {
-                    MusicLiveView(model: model, height: h)
+                    MusicLiveView(model: model, height: h, active: p == .music)
                 }
                 layer(p == .hud, size: model.size(for: .hud)) {
                     if let hud = model.lastHUD { HUDLiveView(hud: hud, height: h) }
@@ -163,13 +163,14 @@ struct IslandView: View {
 struct MusicLiveView: View {
     @ObservedObject var model: IslandModel
     let height: CGFloat
+    var active = true
     @ObservedObject var np = Services.shared.nowPlaying
 
     var body: some View {
         HStack(spacing: 0) {
             // Something important (Claude waiting, a meeting) takes the left side; music keeps its bars.
             if let s = model.status {
-                StatusSlot(item: s)
+                StatusSlot(item: s, spinning: active)
                     .padding(.leading, 12)
                     .frame(width: model.statusLeftEar, alignment: .leading)
             } else {
@@ -292,6 +293,8 @@ struct StatusSlot: View {
     let item: StatusItem
     /// Off when the time is shown on the other side of the notch.
     var showDetail = true
+    /// The "Claude is working" spark turns only while this layer is the one on screen.
+    var spinning = false
 
     var body: some View {
         // Keep Awake: just the mug — the time left lives on the ☕ button in the open island.
@@ -303,7 +306,7 @@ struct StatusSlot: View {
             if item.kind == .awake {
                 PixelMug().padding(.trailing, 1)
             } else if let sym = item.symbol {
-                TileIcon(symbol: sym, tint: item.tint, glyph: 8.5)
+                TileIcon(symbol: sym, tint: item.tint, glyph: 8.5, spinning: spinning)
                     .frame(width: 16, height: 16)
                 .padding(.trailing, 1)
             } else if let bar = item.bar {
@@ -342,7 +345,7 @@ struct StatusLiveView: View {
                     StatusSlot(item: s)
                         .frame(width: model.statusLeftEar, height: height, alignment: .trailing)
                 } else {
-                    StatusSlot(item: s, showDetail: !model.statusSplit)
+                    StatusSlot(item: s, showDetail: !model.statusSplit, spinning: active)
                         .padding(.leading, 12)
                         .frame(width: model.statusLeftEar, alignment: .leading)
                 }
@@ -923,9 +926,12 @@ struct TileIcon: View {
     let symbol: String
     let tint: Color
     let glyph: CGFloat
+    var spinning = false
 
     var body: some View {
-        if symbol == "claude" {
+        if symbol == "claude-spin" {
+            ClaudeSpinner(spinning: spinning)
+        } else if symbol == "claude" {
             ClaudeMark().foregroundStyle(tint)
         } else {
             ZStack {
@@ -954,6 +960,79 @@ struct ClaudeMark: View {
             Image(nsImage: img).renderingMode(.template).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
         } else {
             Image(systemName: "sparkle").resizable().aspectRatio(contentMode: .fit).fontWeight(.bold).padding(2)
+        }
+    }
+}
+
+/// Claude's spark turning slowly while a session works. A Core Animation rotation, so it runs in the
+/// window server and costs Peaky no CPU per frame; it stops whenever it isn't on screen.
+struct ClaudeSpinner: NSViewRepresentable {
+    var spinning: Bool
+
+    func makeNSView(context: Context) -> SpinnerView { SpinnerView() }
+    func updateNSView(_ v: SpinnerView, context: Context) { v.setSpinning(spinning) }
+
+    final class SpinnerView: NSView {
+        private let spark = CALayer()
+        private static let image: CGImage? = {
+            guard let mark = ClaudeMark.image else { return nil }
+            let px = 48
+            guard let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+                  let cg = mark.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+            let r = CGRect(x: 0, y: 0, width: px, height: px)
+            ctx.clip(to: r, mask: cg)                       // the template's shape…
+            ctx.setFillColor(NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1).cgColor)
+            ctx.fill(r)                                     // …in Claude orange
+            return ctx.makeImage()
+        }()
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            spark.contents = Self.image
+            spark.contentsGravity = .resizeAspect
+            layer?.addSublayer(spark)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        override func layout() {
+            super.layout()
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            spark.frame = bounds
+            CATransaction.commit()
+            apply()
+        }
+
+        /// Wanted state; applied once the view is actually on screen (an animation added before the view
+        /// was in a window never ran).
+        private var wantSpin = false
+
+        func setSpinning(_ on: Bool) {
+            wantSpin = on
+            apply()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
+
+        private func apply() {
+            let running = spark.animation(forKey: "spin") != nil
+            let on = wantSpin && window != nil
+            if on, !running {
+                let a = CABasicAnimation(keyPath: "transform.rotation.z")
+                a.fromValue = 0
+                a.toValue = -Double.pi * 2
+                a.duration = 6
+                a.repeatCount = .infinity
+                a.isRemovedOnCompletion = false
+                spark.add(a, forKey: "spin")
+            } else if !on, running {
+                spark.removeAnimation(forKey: "spin")
+            }
         }
     }
 }

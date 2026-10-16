@@ -18,6 +18,17 @@ struct ClaudeAsk: Equatable {
     }
 }
 
+/// A Claude session that's working: since when, last sign of life, and where it lives.
+struct ClaudeWork: Equatable {
+    let key: String
+    let title: String
+    var started = Date()
+    var beat = Date()
+    var focus: SessionFocus?
+    /// A new prompt (restart the clock) rather than a heartbeat.
+    var restart = false
+}
+
 /// Where a Claude session lives, so clicking its alert can take you back to it.
 struct SessionFocus: Equatable {
     let app: String?   // bundle id of the app Claude runs in

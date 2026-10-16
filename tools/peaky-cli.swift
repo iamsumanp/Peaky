@@ -250,6 +250,9 @@ case "claude":
     if let hostApp { focus["app"] = hostApp }
     if let tty = sessionTTY() { focus["tty"] = tty }
     payload["focus"] = focus
+    // "Claude is working": a start (you sent a prompt) or a heartbeat (it's using tools). Nested, so the
+    // Allow / Deny wait loop doesn't mistake it for the session moving on.
+    let working: [String: Any] = ["key": key, "title": "Claude · \(project)", "focus": focus]
     switch event {
     case "Stop":
         payload["detail"] = "Finished"
@@ -282,13 +285,23 @@ case "claude":
     case "Notification":
         let m = message.lowercased()
         if kind == "idle_prompt" || m.contains("waiting for your input") {
-            exit(0) // the 60-second idle reminder; "Finished" already said it
+            // The 60-second idle reminder: "Finished" already said it. But it also means Claude isn't working
+            // any more — the only sign we get after you interrupt it (Stop doesn't fire then).
+            send(["done": key])
+            exit(0)
         }
         payload["detail"] = kind == "permission_prompt" || m.contains("permission") ? "Needs permission" : "Needs you"
         payload["kind"] = "wait" // stays for the time chosen in Peaky's settings
-    case "PostToolUse", "UserPromptSubmit", "SessionEnd":
-        // Claude carried on (permission granted / you replied): drop any waiting alert.
-        send(["clear": key])
+    case "UserPromptSubmit", "PostToolUse":
+        // Claude carried on (permission granted / you replied): drop any waiting alert; it's working.
+        send(["clear": key, "working": working.merging(["start": event == "UserPromptSubmit"]) { $1 }])
+        exit(0)
+    case "PreToolUse":
+        // About to run a tool (maybe a long build): still working.
+        send(["working": working])
+        exit(0)
+    case "SessionEnd", "StopFailure":
+        send(["clear": key, "done": key])
         exit(0)
     default:
         exit(0)

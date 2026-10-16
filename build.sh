@@ -10,7 +10,13 @@ APP=build/Peaky.app
 FLAGS=()
 [[ ${PEAKY_DEBUG:-0} == 1 && ${1:-} != --dmg ]] && FLAGS=(-Xswiftc -DPEAKY_DEBUG) && echo "› debug build"
 echo "› compiling Swift…"
-swift build -c release $FLAGS 2>&1 | grep -vE "^(\[|Building|Compiling|Write|Planning)" || true
+# Stop on a failed compile (before, the previous binary was quietly reinstalled and reported as running).
+if ! OUT=$(swift build -c release $FLAGS 2>&1); then
+  echo "$OUT" | grep -E "error:" | sort -u
+  echo "✗ build failed"
+  exit 1
+fi
+echo "$OUT" | grep -vE "^(\[|Building|Compiling|Write|Planning)" | grep -E "error|warning: unre" || true
 BIN=$(swift build -c release $FLAGS --show-bin-path)/Peaky
 [[ -x $BIN ]] || { echo "build failed"; exit 1; }
 

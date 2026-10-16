@@ -47,6 +47,9 @@ enum Transient: Equatable {
     case notice(Notice)
     /// Remove any notice with this key (shown or queued).
     case clear(String)
+    /// A Claude session is working (start or heartbeat) / has stopped.
+    case working(ClaudeWork)
+    case workDone(String)
 }
 
 /// Fan-out for HUDs and notices to every island (one per screen).
@@ -64,7 +67,7 @@ enum Presentation: Equatable { case expanded, notice, hud, peek, music, status, 
 
 /// The one important thing shown left of the notch between alerts (even while music plays).
 struct StatusItem: Equatable {
-    enum Kind: Equatable { case claude, download, meeting, awake }
+    enum Kind: Equatable { case claude, working, download, meeting, awake }
     let kind: Kind
     let title: String
     let detail: String
@@ -79,7 +82,7 @@ struct StatusItem: Equatable {
     var focus: SessionFocus? = nil
 
     /// Longer for Claude, so "Claude · project" fits.
-    var titleMax: CGFloat { kind == .claude ? 132 : IslandModel.agendaTitleMax }
+    var titleMax: CGFloat { kind == .claude || kind == .working ? 132 : IslandModel.agendaTitleMax }
 
     /// The Open / Join button and clicking the title.
     func open() {
@@ -178,6 +181,35 @@ final class IslandModel: ObservableObject {
     var cup: CGFloat { caffeinated ? Self.cupWidth : 0 }
     private var claudeWaitTimer: Timer?
 
+    /// Claude sessions that are working right now (prompt sent → Finished / idle), by session key.
+    @Published private(set) var claudeWorking: [String: ClaudeWork] = [:] { didSet { revision &+= 1 } }
+    /// Ticks every 30 s while something is working, for the "· 4m".
+    @Published private(set) var workTick = 0 { didSet { revision &+= 1 } }
+    private var workTimer: Timer?
+
+    /// The working sessions worth showing: not the one already asking for you, not one in the app you're in.
+    private var visibleWork: [ClaudeWork] {
+        guard Prefs.bool(.claudeShowWorking) else { return [] }
+        return claudeWorking.values
+            .filter { $0.key != claudeWaiting?.key }
+            .filter { !(Prefs.bool(.claudeQuietWhenFront) && $0.focus?.app != nil && $0.focus?.app == frontApp) }
+            .sorted { $0.started < $1.started }
+    }
+
+    private func workingChanged(_ apply: () -> Void) {
+        let wasEmpty = claudeWorking.isEmpty
+        if wasEmpty { withAnimation(Self.spring, apply) } else { apply() }
+        if claudeWorking.isEmpty { workTimer?.invalidate(); workTimer = nil; return }
+        guard workTimer == nil else { return }
+        workTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            // No sign of life for 20 minutes (e.g. the Mac slept mid-run): stop showing it.
+            let stale = self.claudeWorking.filter { Date().timeIntervalSince($0.value.beat) > 20 * 60 }.map(\.key)
+            if !stale.isEmpty { self.workingChanged { stale.forEach { self.claudeWorking[$0] = nil } } }
+            self.workTick &+= 1
+        }
+    }
+
     /// Left-slot priority: Claude needs you > a download in progress > meeting (15 min before → end).
     var status: StatusItem? {
         if let c = claudeWaiting, !lookingAt(c) {
@@ -193,13 +225,18 @@ final class IslandModel: ObservableObject {
                               detail: pct.map { "\($0)%" } ?? "Downloading", tint: .white.opacity(0.7), bar: nil,
                               symbol: "arrow.down", openURL: nil, actionLabel: nil)
         }
-        if let e = agenda {
-            // Not within 15 minutes yet = shown because the previous meeting just ended.
-            let next = !e.soonOrNow
-            return StatusItem(kind: .meeting, title: next ? "Next: " + e.title : e.title, detail: agendaText,
-                              tint: e.isNow ? Theme.accent : .white.opacity(0.6), bar: e.color, symbol: nil,
-                              openURL: e.joinURL, actionLabel: e.joinURL == nil ? nil : "Join")
+        if let e = agenda, e.soonOrNow {
+            return meetingItem(e)
         }
+        if let w = visibleWork.first {
+            let mins = Int(Date().timeIntervalSince(visibleWork.map(\.started).min() ?? w.started) / 60)
+            let time = mins < 1 ? "" : " · " + (mins < 60 ? "\(mins)m" : "\(mins / 60)h \(mins % 60)m")
+            let many = visibleWork.count > 1
+            return StatusItem(kind: .working, title: many ? "Claude · \(visibleWork.count) sessions" : w.title,
+                              detail: "working" + time, tint: Color(hex: 0xD97757).opacity(0.8), bar: nil,
+                              symbol: "claude-spin", openURL: nil, actionLabel: "Open", focus: w.focus)
+        }
+        if let e = agenda { return meetingItem(e) }
         // Keep Awake takes the left side only when it's free (music puts its artwork there) and a pet
         // holds the right; with no pet, the mug simply sits in the pet's place on the right instead.
         let awake = Services.shared.awake
@@ -210,11 +247,19 @@ final class IslandModel: ObservableObject {
         return nil
     }
 
+    private func meetingItem(_ e: CalEvent) -> StatusItem {
+        // Not within 15 minutes yet = shown because the previous meeting just ended.
+        let next = !e.soonOrNow
+        return StatusItem(kind: .meeting, title: next ? "Next: " + e.title : e.title, detail: agendaText,
+                          tint: e.isNow ? Theme.accent : .white.opacity(0.6), bar: e.color, symbol: nil,
+                          openURL: e.joinURL, actionLabel: e.joinURL == nil ? nil : "Join")
+    }
+
     /// The status gets its own line in the peek / open panel — except a meeting in the idle panel,
     /// which already lists it.
     var showsStatusLine: Bool {
         guard let s = status, s.kind != .awake else { return false }
-        return s.kind == .claude || Services.shared.nowPlaying.hasMedia
+        return s.kind == .claude || s.kind == .working || Services.shared.nowPlaying.hasMedia
     }
 
     private func setClaudeWaiting(_ n: Notice?) {
@@ -522,11 +567,25 @@ final class IslandModel: ObservableObject {
             hudTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: false) { [weak self] _ in
                 withAnimation(Self.close) { self?.hud = nil }
             }
+        case .working(let w):
+            workingChanged {
+                if var cur = claudeWorking[w.key], !w.restart {
+                    cur.beat = Date()
+                    if let f = w.focus { cur.focus = f }
+                    claudeWorking[w.key] = cur
+                } else {
+                    claudeWorking[w.key] = w
+                }
+            }
+        case .workDone(let key):
+            if claudeWorking[key] != nil { workingChanged { claudeWorking[key] = nil } }
         case .clear(let key):
             if claudeWaiting?.key == key { setClaudeWaiting(nil) }
             queue.removeAll { $0.key == key }
             if notice?.key == key { endNotice(force: true) }
         case .notice(var n):
+            // "Finished" (any non-waiting alert for that session): it's no longer working.
+            if !n.sticky, let key = n.key, claudeWorking[key] != nil { workingChanged { claudeWorking[key] = nil } }
             if lookingAt(n) {
                 // You're already in the app this Claude session runs in: no popup. A wait is still kept
                 // (hidden) so it appears if you switch away before answering.

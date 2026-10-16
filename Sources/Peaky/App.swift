@@ -8,7 +8,7 @@ enum Prefs {
     enum Key: String {
         case display, openOnHover, showMusicActivity, showHUD, hudReplace, pet
         case awakeDisplay, awakeDefault, awakeAtLaunch
-        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates, hideFromCapture
+        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates, hideFromCapture, claudeShowWorking
     }
 
     static func register() {
@@ -24,6 +24,7 @@ enum Prefs {
             Key.claudeQuietWhenFront.rawValue: true,
             Key.checkUpdates.rawValue: true,
             Key.hideFromCapture.rawValue: true,
+            Key.claudeShowWorking.rawValue: true,
             Key.showMusicActivity.rawValue: true,
             Key.showHUD.rawValue: true,
             Key.hudReplace.rawValue: false,
@@ -141,8 +142,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let json = Channel.open(n.object as? String) else { return }
             if let data = json.data(using: .utf8),
                let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let key = o["clear"] as? String {
-                IslandHub.post(.clear(key))
+               o["clear"] != nil || o["working"] != nil || o["done"] != nil {
+                if let key = o["clear"] as? String { IslandHub.post(.clear(key)) }
+                if let w = o["working"] as? [String: Any], let key = w["key"] as? String {
+                    let f = w["focus"] as? [String: Any]
+                    IslandHub.post(.working(ClaudeWork(
+                        key: key, title: w["title"] as? String ?? "Claude",
+                        focus: f.map { SessionFocus(app: $0["app"] as? String, tty: $0["tty"] as? String, cwd: $0["cwd"] as? String) },
+                        restart: w["start"] as? Bool ?? false)))
+                }
+                if let key = o["done"] as? String { IslandHub.post(.workDone(key)) }
                 return
             }
             guard let notice = Notice(cliJSON: json) else { return }
@@ -499,6 +508,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.Key.claudeNotchApprove.rawValue) private var claudeApprove = true
     @AppStorage(Prefs.Key.claudeQuietWhenFront.rawValue) private var claudeQuiet = true
     @AppStorage(Prefs.Key.hideFromCapture.rawValue) private var hideFromCapture = true
+    @AppStorage(Prefs.Key.claudeShowWorking.rawValue) private var claudeWorking = true
 
     @ObservedObject private var cal = Services.shared.calendar
     @State private var trusted = MediaKeyTap.trusted
@@ -613,6 +623,8 @@ struct SettingsView: View {
                     Text("5 minutes").tag(300.0)
                     Text("Until handled").tag(3600.0)
                 }
+                Toggle("Show while Claude is working", isOn: $claudeWorking)
+                    .help("“Claude · my-app · working 4m” with a slowly turning spark while a session runs; it turns into Finished when done.")
                 Toggle("Stay quiet while Claude's app is in front", isOn: $claudeQuiet)
                     .help("No Claude alerts while you're looking at the app the session runs in (the Claude app, that Terminal, that editor). If you switch away while Claude still needs you, it shows up in the notch then.")
                 Toggle("Allow / Deny Claude from the notch", isOn: $claudeApprove)

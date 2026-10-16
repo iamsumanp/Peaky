@@ -19,7 +19,7 @@ enum ClaudeHooks {
         commandOverride ?? Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/peaky-cli").path + " claude"
     }
     /// Everything except PermissionRequest is fire-and-forget; that one waits for Allow / Deny.
-    static let events = ["Stop", "Notification", "PostToolUse", "UserPromptSubmit", "PermissionRequest"]
+    static let events = ["Stop", "Notification", "PreToolUse", "PostToolUse", "UserPromptSubmit", "PermissionRequest"]
 
     private static func isOurs(_ hook: [String: Any]) -> Bool {
         guard let c = hook["command"] as? String else { return false }
