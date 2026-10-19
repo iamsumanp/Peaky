@@ -304,7 +304,7 @@ struct StatusSlot: View {
             PixelMug()
         } else if item.kind == .working, compact {
             TileIcon(symbol: item.symbol ?? "claude", tint: item.tint, glyph: 8.5)
-                .frame(width: 16, height: 16)
+                .frame(width: 20, height: 20)
         } else {
             full
         }
