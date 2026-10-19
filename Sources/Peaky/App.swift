@@ -624,7 +624,7 @@ struct SettingsView: View {
                     Text("Until handled").tag(3600.0)
                 }
                 Toggle("Show while Claude is working", isOn: $claudeWorking)
-                    .help("“Claude · my-app · working 4m” with a slowly turning spark while a session runs; it turns into Finished when done.")
+                    .help("“Claude · my-app · working 4m” (just Claude's spark when collapsed) while a session runs; it turns into Finished when done.")
                 Toggle("Stay quiet while Claude's app is in front", isOn: $claudeQuiet)
                     .help("No Claude alerts while you're looking at the app the session runs in (the Claude app, that Terminal, that editor). If you switch away while Claude still needs you, it shows up in the notch then.")
                 Toggle("Allow / Deny Claude from the notch", isOn: $claudeApprove)

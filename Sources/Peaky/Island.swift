@@ -240,7 +240,7 @@ final class IslandModel: ObservableObject {
             let names = visibleWork.map { $0.title.replacingOccurrences(of: "Claude · ", with: "") }
             return StatusItem(kind: .working, title: "Claude · " + names.joined(separator: ", "),
                               detail: "working" + time, tint: Color(hex: 0xD97757).opacity(0.8), bar: nil,
-                              symbol: "claude-spin", openURL: nil, actionLabel: "Open",
+                              symbol: "claude", openURL: nil, actionLabel: "Open",
                               inline: mins < 1 ? "working" : String(time.dropFirst(3)), focus: w.focus)
         }
         if let e = agenda { return meetingItem(e) }
@@ -523,8 +523,8 @@ final class IslandModel: ObservableObject {
     var statusRightEar: CGFloat {
         guard let s = status else { return 0 }
         if s.kind == .awake { return pet != .none ? Self.petEar : 0 }
-        // Claude working (just its spark on the left): the pet keeps its place, the cup at the end.
-        if s.kind == .working { return (pet != .none ? Self.petEar : 0) + cup }
+        // Claude working (just its spark on the left): no pet, nothing on the right but the Keep Awake cup.
+        if s.kind == .working { return cup }
         let d = statusSplit ? (s.detail as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width + Self.innerGap + 12 : 0
         return (d + cup).rounded(.up)
     }

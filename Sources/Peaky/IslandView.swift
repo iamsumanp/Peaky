@@ -170,11 +170,11 @@ struct MusicLiveView: View {
         HStack(spacing: 0) {
             // Something important (Claude waiting, a meeting) takes the left side; music keeps its bars.
             if let s = model.status, s.isGlyph {
-                StatusSlot(item: s, spinning: active, compact: true)
+                StatusSlot(item: s, compact: true)
                     .padding(.trailing, 4)
                     .frame(width: model.statusLeftEar, height: height, alignment: .trailing)
             } else if let s = model.status {
-                StatusSlot(item: s, spinning: active)
+                StatusSlot(item: s)
                     .padding(.leading, 12)
                     .frame(width: model.statusLeftEar, alignment: .leading)
             } else {
@@ -293,8 +293,6 @@ struct StatusSlot: View {
     let item: StatusItem
     /// Off when the time is shown on the other side of the notch.
     var showDetail = true
-    /// The "Claude is working" spark turns only while this layer is the one on screen.
-    var spinning = false
     /// In the collapsed notch: Claude working is just its spark (details in the open island).
     var compact = false
     /// The open island has room for longer titles (e.g. every working Claude session's name).
@@ -305,7 +303,7 @@ struct StatusSlot: View {
         if item.kind == .awake {
             PixelMug()
         } else if item.kind == .working, compact {
-            TileIcon(symbol: item.symbol ?? "claude-spin", tint: item.tint, glyph: 8.5, spinning: spinning)
+            TileIcon(symbol: item.symbol ?? "claude", tint: item.tint, glyph: 8.5)
                 .frame(width: 16, height: 16)
         } else {
             full
@@ -317,7 +315,7 @@ struct StatusSlot: View {
             if item.kind == .awake {
                 PixelMug().padding(.trailing, 1)
             } else if let sym = item.symbol {
-                TileIcon(symbol: sym, tint: item.tint, glyph: 8.5, spinning: spinning)
+                TileIcon(symbol: sym, tint: item.tint, glyph: 8.5)
                     .frame(width: 16, height: 16)
                 .padding(.trailing, 1)
             } else if let bar = item.bar {
@@ -353,11 +351,11 @@ struct StatusLiveView: View {
             if let s = model.status {
                 if s.isGlyph {
                     // A lone icon (mug / Claude's spark), tucked up against the notch side of its slot.
-                    StatusSlot(item: s, spinning: active, compact: true)
+                    StatusSlot(item: s, compact: true)
                         .padding(.trailing, s.kind == .working ? 4 : 0)
                         .frame(width: model.statusLeftEar, height: height, alignment: .trailing)
                 } else {
-                    StatusSlot(item: s, showDetail: !model.statusSplit, spinning: active)
+                    StatusSlot(item: s, showDetail: !model.statusSplit)
                         .padding(.leading, 12)
                         .frame(width: model.statusLeftEar, alignment: .leading)
                 }
@@ -374,12 +372,12 @@ struct StatusLiveView: View {
                         .padding(.trailing, 12)
                 }
                 if model.caffeinated { CupBadge() }
-            } else {
-                if model.pet != .none {
-                    PetView(kind: model.pet, hovering: model.hovering, active: active)
-                        .frame(width: IslandModel.petEar, height: height)
-                }
-                if model.status?.kind == .working, model.caffeinated { CupBadge() }
+            } else if model.status?.kind == .working {
+                // Claude working: just its spark on the left — no pet; the cup only if Keep Awake is on.
+                if model.caffeinated { CupBadge() }
+            } else if model.pet != .none {
+                PetView(kind: model.pet, hovering: model.hovering, active: active)
+                    .frame(width: IslandModel.petEar, height: height)
             }
         }
         .frame(height: height)
@@ -941,12 +939,9 @@ struct TileIcon: View {
     let symbol: String
     let tint: Color
     let glyph: CGFloat
-    var spinning = false
 
     var body: some View {
-        if symbol == "claude-spin" {
-            ClaudeSpinner(spinning: spinning)
-        } else if symbol == "claude" {
+        if symbol == "claude" {
             ClaudeMark().foregroundStyle(tint)
         } else {
             ZStack {
@@ -975,79 +970,6 @@ struct ClaudeMark: View {
             Image(nsImage: img).renderingMode(.template).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
         } else {
             Image(systemName: "sparkle").resizable().aspectRatio(contentMode: .fit).fontWeight(.bold).padding(2)
-        }
-    }
-}
-
-/// Claude's spark turning slowly while a session works. A Core Animation rotation, so it runs in the
-/// window server and costs Peaky no CPU per frame; it stops whenever it isn't on screen.
-struct ClaudeSpinner: NSViewRepresentable {
-    var spinning: Bool
-
-    func makeNSView(context: Context) -> SpinnerView { SpinnerView() }
-    func updateNSView(_ v: SpinnerView, context: Context) { v.setSpinning(spinning) }
-
-    final class SpinnerView: NSView {
-        private let spark = CALayer()
-        private static let image: CGImage? = {
-            guard let mark = ClaudeMark.image else { return nil }
-            let px = 48
-            guard let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
-                  let cg = mark.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-            let r = CGRect(x: 0, y: 0, width: px, height: px)
-            ctx.clip(to: r, mask: cg)                       // the template's shape…
-            ctx.setFillColor(NSColor(srgbRed: 0.85, green: 0.47, blue: 0.34, alpha: 1).cgColor)
-            ctx.fill(r)                                     // …in Claude orange
-            return ctx.makeImage()
-        }()
-
-        override init(frame: NSRect) {
-            super.init(frame: frame)
-            wantsLayer = true
-            spark.contents = Self.image
-            spark.contentsGravity = .resizeAspect
-            layer?.addSublayer(spark)
-        }
-        required init?(coder: NSCoder) { fatalError() }
-
-        override func layout() {
-            super.layout()
-            CATransaction.begin(); CATransaction.setDisableActions(true)
-            spark.frame = bounds
-            CATransaction.commit()
-            apply()
-        }
-
-        /// Wanted state; applied once the view is actually on screen (an animation added before the view
-        /// was in a window never ran).
-        private var wantSpin = false
-
-        func setSpinning(_ on: Bool) {
-            wantSpin = on
-            apply()
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            apply()
-        }
-
-        private func apply() {
-            let running = spark.animation(forKey: "spin") != nil
-            let on = wantSpin && window != nil
-            if on, !running {
-                let a = CABasicAnimation(keyPath: "transform.rotation.z")
-                a.fromValue = 0
-                a.toValue = -Double.pi * 2
-                a.duration = 6
-                a.repeatCount = .infinity
-                a.isRemovedOnCompletion = false
-                spark.add(a, forKey: "spin")
-            } else if !on, running {
-                spark.removeAnimation(forKey: "spin")
-            }
         }
     }
 }
