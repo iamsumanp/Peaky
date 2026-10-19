@@ -37,6 +37,38 @@ final class NowPlaying: ObservableObject {
     static let staleAfter: TimeInterval = 60
 
     var hasMedia: Bool { !title.isEmpty && recentlyActive }
+
+    /// The player said "paused" but its audio is running (seen with Chrome): we're showing it as playing.
+    private var playingFromAudio = false
+    private var audioStarted = false
+
+    /// Sound started or stopped somewhere: if that contradicts what the player told macOS, believe the sound.
+    private func audioChanged() {
+        guard let app = appBundleID, !title.isEmpty, expectedPlaying == nil else { return }
+        let sounding = AudioActivity.shared.isPlaying(appBundleID: app)
+        if sounding, !isPlaying {
+            Self.log("\(app) reports paused but is playing sound — showing it as playing (\(title))")
+            elapsedAtSnapshot = elapsed(); snapshotDate = Date()
+            playingFromAudio = true
+            update(\.isPlaying, true)
+            updateRecency()
+        } else if !sounding, playingFromAudio {
+            elapsedAtSnapshot = elapsed(); snapshotDate = Date()
+            playingFromAudio = false
+            update(\.isPlaying, false)
+            updateRecency()
+        }
+    }
+
+    /// ~/Library/Logs/Peaky/nowplaying.log — only written when the sound overrules the player.
+    private static func log(_ line: String) {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Peaky")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("nowplaying.log")
+        let text = ISO8601DateFormatter().string(from: Date()) + " " + line + "\n"
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(text.utf8)); try? h.close() }
+        else { try? text.write(to: url, atomically: true, encoding: .utf8) }
+    }
     /// Artist, else album; empty when the player gives neither (then the title sits centred).
     var subtitle: String { artist.isEmpty ? album : artist }
 
@@ -91,6 +123,8 @@ final class NowPlaying: ObservableObject {
     // MARK: - Helper process
 
     func start() {
+        AudioActivity.shared.onChange = { [weak self] in self?.audioChanged() }
+        if !audioStarted { audioStarted = true; AudioActivity.shared.start() }
         guard let dylib = Bundle.main.url(forResource: "PeakyMedia", withExtension: "dylib") else {
             NSLog("Peaky: PeakyMedia.dylib missing from bundle — Now Playing disabled")
             return
@@ -156,7 +190,8 @@ final class NowPlaying: ObservableObject {
 
         let pid = (o["pid"] as? NSNumber)?.intValue ?? 0
         let app = pid > 0 ? NSRunningApplication(processIdentifier: pid_t(pid)) : nil
-        var playing = (o["playing"] as? NSNumber)?.boolValue ?? false
+        // A player moving at a non-zero rate is playing, whatever its "playing" flag says.
+        var playing = (o["playing"] as? NSNumber)?.boolValue ?? false || (o["rate"] as? Double ?? 0) > 0
         if let expected = expectedPlaying {
             if playing == expected || Date() > expectedUntil { expectedPlaying = nil } else { playing = expected }
         }
@@ -175,6 +210,14 @@ final class NowPlaying: ObservableObject {
         update(\.album, o["album"] as? String ?? "")
         update(\.duration, o["duration"] as? Double ?? 0)
         rate = o["rate"] as? Double ?? 0
+        // The player's word, unless its sound says otherwise (see audioChanged): Chrome keeps re-reporting
+        // "paused" while a video plays on, which flipped the button back to ▶.
+        playingFromAudio = false
+        if !playing, expectedPlaying == nil, let id = app?.bundleIdentifier, !newTitle.isEmpty,
+           AudioActivity.shared.isPlaying(appBundleID: id) {
+            playing = true
+            playingFromAudio = true
+        }
         update(\.isPlaying, playing && !newTitle.isEmpty)
         updateRecency()
 
