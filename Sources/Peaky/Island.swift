@@ -83,6 +83,10 @@ struct StatusItem: Equatable {
     var ask: ClaudeAsk? = nil
     var focus: SessionFocus? = nil
 
+    /// Shown as a lone icon beside the notch when collapsed (Keep Awake's mug, Claude's working spark);
+    /// the words live in the open island.
+    var isGlyph: Bool { kind == .awake || kind == .working }
+
     /// Longer for Claude, so "Claude · project" fits.
     var titleMax: CGFloat { kind == .claude || kind == .working ? 132 : IslandModel.agendaTitleMax }
 
@@ -233,8 +237,8 @@ final class IslandModel: ObservableObject {
         if let w = visibleWork.first {
             let mins = Int(Date().timeIntervalSince(visibleWork.map(\.started).min() ?? w.started) / 60)
             let time = mins < 1 ? "" : " · " + (mins < 60 ? "\(mins)m" : "\(mins / 60)h \(mins % 60)m")
-            let many = visibleWork.count > 1
-            return StatusItem(kind: .working, title: many ? "Claude · \(visibleWork.count) sessions" : w.title,
+            let names = visibleWork.map { $0.title.replacingOccurrences(of: "Claude · ", with: "") }
+            return StatusItem(kind: .working, title: "Claude · " + names.joined(separator: ", "),
                               detail: "working" + time, tint: Color(hex: 0xD97757).opacity(0.8), bar: nil,
                               symbol: "claude-spin", openURL: nil, actionLabel: "Open",
                               inline: mins < 1 ? "working" : String(time.dropFirst(3)), focus: w.focus)
@@ -500,14 +504,14 @@ final class IslandModel: ObservableObject {
     /// Meeting / Claude with the right side free (no music): title left of the notch, time right of it.
     var statusSplit: Bool {
         guard let s = status else { return false }
-        return s.kind != .awake && !musicActive
+        return !s.isGlyph && !musicActive
     }
 
     /// Colour bar (or icon) + title — plus "· in 10 mins" when it isn't split to the right.
     var statusLeftEar: CGFloat {
         guard let s = status else { return 0 }
         // Same width as the pet's slot, so the mug and the pet sit symmetrically around the notch.
-        if s.kind == .awake { return Self.petEar }
+        if s.isGlyph { return Self.petEar }
         let lead: CGFloat = s.symbol != nil ? 16 + 6 : 3 + 7
         let t = min((s.title as NSString).size(withAttributes: [.font: Self.agendaTitleFont]).width, s.titleMax)
         let d = statusSplit ? 0 : 5 + (("· " + (s.inline ?? s.detail)) as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width
@@ -519,6 +523,8 @@ final class IslandModel: ObservableObject {
     var statusRightEar: CGFloat {
         guard let s = status else { return 0 }
         if s.kind == .awake { return pet != .none ? Self.petEar : 0 }
+        // Claude working (just its spark on the left): the pet keeps its place, the cup at the end.
+        if s.kind == .working { return (pet != .none ? Self.petEar : 0) + cup }
         let d = statusSplit ? (s.detail as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width + Self.innerGap + 12 : 0
         return (d + cup).rounded(.up)
     }

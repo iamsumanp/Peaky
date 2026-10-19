@@ -169,7 +169,11 @@ struct MusicLiveView: View {
     var body: some View {
         HStack(spacing: 0) {
             // Something important (Claude waiting, a meeting) takes the left side; music keeps its bars.
-            if let s = model.status {
+            if let s = model.status, s.isGlyph {
+                StatusSlot(item: s, spinning: active, compact: true)
+                    .padding(.trailing, 4)
+                    .frame(width: model.statusLeftEar, height: height, alignment: .trailing)
+            } else if let s = model.status {
                 StatusSlot(item: s, spinning: active)
                     .padding(.leading, 12)
                     .frame(width: model.statusLeftEar, alignment: .leading)
@@ -291,10 +295,21 @@ struct StatusSlot: View {
     var showDetail = true
     /// The "Claude is working" spark turns only while this layer is the one on screen.
     var spinning = false
+    /// In the collapsed notch: Claude working is just its spark (details in the open island).
+    var compact = false
+    /// The open island has room for longer titles (e.g. every working Claude session's name).
+    var titleLimit: CGFloat? = nil
 
     var body: some View {
         // Keep Awake: just the mug — the time left lives on the ☕ button in the open island.
-        if item.kind == .awake { PixelMug() } else { full }
+        if item.kind == .awake {
+            PixelMug()
+        } else if item.kind == .working, compact {
+            TileIcon(symbol: item.symbol ?? "claude-spin", tint: item.tint, glyph: 8.5, spinning: spinning)
+                .frame(width: 16, height: 16)
+        } else {
+            full
+        }
     }
 
     private var full: some View {
@@ -314,7 +329,7 @@ struct StatusSlot: View {
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: item.titleMax, alignment: .leading)
+                .frame(maxWidth: titleLimit ?? item.titleMax, alignment: .leading)
                 .fixedSize(horizontal: true, vertical: false)
             if showDetail {
                 Text("· " + (item.inline ?? item.detail))
@@ -336,9 +351,10 @@ struct StatusLiveView: View {
     var body: some View {
         HStack(spacing: 0) {
             if let s = model.status {
-                if s.kind == .awake {
-                    // Tucked up against the notch side of its slot.
-                    StatusSlot(item: s)
+                if s.isGlyph {
+                    // A lone icon (mug / Claude's spark), tucked up against the notch side of its slot.
+                    StatusSlot(item: s, spinning: active, compact: true)
+                        .padding(.trailing, s.kind == .working ? 4 : 0)
                         .frame(width: model.statusLeftEar, height: height, alignment: .trailing)
                 } else {
                     StatusSlot(item: s, showDetail: !model.statusSplit, spinning: active)
@@ -347,7 +363,7 @@ struct StatusLiveView: View {
                 }
             }
             Spacer(minLength: 0)
-            if let s = model.status, s.kind != .awake {
+            if let s = model.status, !s.isGlyph {
                 // Meeting / Claude: the time on the right, no pet; the mug at the end if Keep Awake is on.
                 if model.statusSplit {
                     Text(s.detail)
@@ -358,9 +374,12 @@ struct StatusLiveView: View {
                         .padding(.trailing, 12)
                 }
                 if model.caffeinated { CupBadge() }
-            } else if model.pet != .none {
-                PetView(kind: model.pet, hovering: model.hovering, active: active)
-                    .frame(width: IslandModel.petEar, height: height)
+            } else {
+                if model.pet != .none {
+                    PetView(kind: model.pet, hovering: model.hovering, active: active)
+                        .frame(width: IslandModel.petEar, height: height)
+                }
+                if model.status?.kind == .working, model.caffeinated { CupBadge() }
             }
         }
         .frame(height: height)
@@ -377,7 +396,7 @@ struct StatusLine: View {
 
     private var plain: some View {
         HStack(spacing: 8) {
-            StatusSlot(item: item)
+            StatusSlot(item: item, titleLimit: 250)
                 .contentShape(Rectangle())
                 .onTapGesture { item.open() }
             Spacer(minLength: 6)
