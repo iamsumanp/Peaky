@@ -36,9 +36,30 @@ struct ShelfView: View {
         } else {
             VStack(spacing: 6) {
                 bar
-                ShelfGrid(items: shelf.items, sel: sel)
+                ShelfGrid(items: shelf.items, sel: sel, justAdded: shelf.justAdded)
                     .frame(height: model.shelfGridHeight(width: model.size(for: .expanded).width))
             }
+            .overlay {
+                // While dragging a file: one big target across the shelf, well below the screen's top edge.
+                if model.fileDragging {
+                    RoundedRectangle(cornerRadius: Theme.tileRadius + 4)
+                        .fill(Color.black.opacity(0.82))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.tileRadius + 4)
+                            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                            .foregroundStyle(model.dropTargeted ? Theme.accent : .white.opacity(0.35)))
+                        .overlay {
+                            VStack(spacing: 6) {
+                                Image(systemName: "tray.and.arrow.down.fill").font(.system(size: 20))
+                                    .symbolEffect(.bounce, value: model.dropTargeted)
+                                Text("Drop here to add").font(Theme.body(12, .semibold))
+                            }
+                            .foregroundStyle(model.dropTargeted ? Theme.accent : .white.opacity(0.75))
+                        }
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: model.fileDragging)
         }
     }
 
@@ -46,10 +67,12 @@ struct ShelfView: View {
         let n = sel.urls.count, all = shelf.items.count
         let selecting = n > 0
         return HStack(spacing: 6) {
-            Text(selecting ? "\(n) of \(all) selected" : "\(all) file\(all == 1 ? "" : "s")")
+            let added = shelf.justAdded.count
+            Text(selecting ? "\(n) of \(all) selected" : added > 0 ? "\(added) added" : "\(all) file\(all == 1 ? "" : "s")")
                 .font(Theme.body(11, .medium))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(added > 0 && !selecting ? Theme.accent : .white.opacity(0.6))
                 .monospacedDigit()
+                .animation(.easeOut(duration: 0.2), value: added)
             Spacer(minLength: 4)
             BarChip(label: n == all ? "Deselect" : "Select all", help: "⌘A selects all · Esc deselects") {
                 n == all ? sel.clear() : sel.selectAll()
@@ -114,6 +137,7 @@ final class ShelfSelection: ObservableObject {
 struct ShelfGrid: NSViewRepresentable {
     let items: [URL]
     let sel: ShelfSelection
+    var justAdded = Set<URL>()
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -156,10 +180,13 @@ struct ShelfGrid: NSViewRepresentable {
         guard let cv = scroll.documentView as? ShelfCollectionView else { return }
         sel.view = cv
         let c = context.coordinator
+        c.justAdded = justAdded
         if c.items != items {
             let keep = sel.urls.intersection(items)
             c.items = items
             cv.reloadData()
+            // New files are on top: show them.
+            if !justAdded.isEmpty { cv.enclosingScrollView?.contentView.scroll(to: .zero) }
             cv.selectionIndexPaths = Set(items.enumerated().filter { keep.contains($0.element) }
                 .map { IndexPath(item: $0.offset, section: 0) })
         }
@@ -180,6 +207,16 @@ struct ShelfGrid: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSCollectionViewDataSource, NSCollectionViewDelegate {
         var items: [URL] = []
+        weak var view: NSCollectionView?
+        /// Highlighted tiles; the highlight goes when this empties again.
+        var justAdded = Set<URL>() {
+            didSet {
+                guard justAdded != oldValue else { return }
+                view?.visibleItems().forEach { item in
+                    if let c = item as? ShelfCell, let u = c.url { c.isNew = justAdded.contains(u) }
+                }
+            }
+        }
 
         func collectionView(_ cv: NSCollectionView, didSelectItemsAt ips: Set<IndexPath>) {
             (cv as? ShelfCollectionView)?.selectionChanged()
@@ -192,8 +229,10 @@ struct ShelfGrid: NSViewRepresentable {
 
         func collectionView(_ cv: NSCollectionView, itemForRepresentedObjectAt ip: IndexPath) -> NSCollectionViewItem {
             let cell = cv.makeItem(withIdentifier: ShelfCell.id, for: ip)
+            view = cv
             if let c = cell as? ShelfCell {
                 c.show(items[ip.item])
+                c.isNew = justAdded.contains(items[ip.item])
                 c.onRemove = { url in withAnimation { Services.shared.shelf.remove(url) } }
             }
             return cell
@@ -360,7 +399,9 @@ final class ShelfCell: NSCollectionViewItem {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let removeButton = NSButton()
-    private var url: URL?
+    private(set) var url: URL?
+    /// Just dropped: an accent ring for a few seconds.
+    var isNew = false { didSet { if isNew != oldValue { refresh() } } }
     private var hovering = false { didSet { refresh() } }
     var onRemove: (URL) -> Void = { _ in }
 
@@ -423,7 +464,10 @@ final class ShelfCell: NSCollectionViewItem {
         let on = highlightState == .forSelection || (isSelected && highlightState != .forDeselection)
         let accent = NSColor(Theme.accent)
         view.layer?.backgroundColor = on ? accent.withAlphaComponent(0.18).cgColor
+            : isNew ? accent.withAlphaComponent(0.1).cgColor
             : NSColor.white.withAlphaComponent(hovering ? 0.08 : 0).cgColor
+        view.layer?.borderWidth = isNew && !on ? 1.5 : 0
+        view.layer?.borderColor = accent.cgColor
         removeButton.isHidden = !hovering
         label.layer?.backgroundColor = on ? accent.cgColor : NSColor.clear.cgColor
         label.textColor = on ? .black : NSColor.white.withAlphaComponent(0.8)

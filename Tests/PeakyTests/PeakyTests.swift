@@ -195,3 +195,17 @@ import Testing
         #expect(DownloadsMonitor.cleanName(nil) == "Download")
     }
 }
+
+@Suite struct ShelfOrder {
+    @Test func droppedFilesGoOnTopAndAreMarkedNew() {
+        let shelf = ShelfStore()
+        let saved = shelf.items
+        defer { shelf.clear(); shelf.add(saved.reversed().reversed()) }
+        shelf.clear()
+        let a = URL(fileURLWithPath: "/tmp/a"), b = URL(fileURLWithPath: "/tmp/b"), c = URL(fileURLWithPath: "/tmp/c")
+        shelf.add([a, b])
+        shelf.add([c, a])          // a again: moves up with c, no duplicate
+        #expect(shelf.items == [c, a, b])
+        #expect(shelf.justAdded == [c, a])
+    }
+}

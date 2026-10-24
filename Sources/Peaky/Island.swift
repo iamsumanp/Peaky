@@ -159,6 +159,10 @@ final class IslandModel: ObservableObject {
     @Published private(set) var musicActive = false { didSet { revision &+= 1 } }
     @Published private(set) var pet: PetKind = .none { didSet { revision &+= 1 } }
     @Published var dropTargeted = false { didSet { revision &+= 1 } }
+    /// A file is being dragged somewhere on screen (the shelf shows a big drop area, away from the screen edge).
+    @Published var fileDragging = false { didSet { revision &+= 1 } }
+    var holdShelfUntil = Date.distantPast
+    var holdingShelf: Bool { Date() < holdShelfUntil }
     /// Files on the shelf — the open island grows a row at a time to show them.
     @Published private(set) var shelfCount = 0 { didSet { revision &+= 1 } }
     /// The open player shows a progress bar when the track has a length (not for live streams).
@@ -698,6 +702,9 @@ final class IslandModel: ObservableObject {
 
     func handleDrop(_ providers: [NSItemProvider]) -> Bool {
         dragLog("drop received (\(providers.count) items)")
+        // The files arrive a moment after the drop; hold the shelf open meanwhile (even an empty one).
+        holdShelfUntil = Date().addingTimeInterval(5)
+        tab = .shelf
         var urls: [URL] = []
         let group = DispatchGroup()
         for p in providers where p.canLoadObject(ofClass: URL.self) {

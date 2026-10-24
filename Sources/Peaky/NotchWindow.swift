@@ -111,7 +111,9 @@ final class NotchController {
 
     /// The shelf (with files on it) is a workspace — select, drag into other apps, come back — so it doesn't
     /// close when the mouse wanders off, only on a click outside, Esc, or a swipe up.
-    private var shelfSticky: Bool { model.expanded && model.tab == .shelf && model.shelfCount > 0 }
+    private var shelfSticky: Bool {
+        model.expanded && model.tab == .shelf && (model.shelfCount > 0 || model.holdingShelf || fileDragActive)
+    }
 
     /// Debug only: the notch centre in screen coordinates.
     var notchCentre: CGPoint { CGPoint(x: screen.frame.midX, y: screen.frame.maxY - 10) }
@@ -257,8 +259,11 @@ final class NotchController {
         }
     }()
 
+    /// Where a file drag opens the shelf: well below the island too, so it opens before you reach the very top
+    /// of the screen (pausing there with a drag opens Mission Control).
     private var dropZone: CGRect {
-        islandRect(.expanded).insetBy(dx: -30, dy: -30)
+        let r = islandRect(.expanded)
+        return CGRect(x: r.minX - 30, y: r.minY - 90, width: r.width + 60, height: r.height + 120)
     }
 
     // MARK: Mouse
@@ -283,6 +288,7 @@ final class NotchController {
         // Clicks in other apps: the sticky shelf closes on a click anywhere outside it.
         if let m = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown], handler: { [weak self] _ in
             guard let self, self.shelfSticky, !self.hitRect.contains(self.mouse) else { return }
+            dragLog("shelf closed: click outside")
             self.model.collapse()
         }) {
             monitors.append(m)
@@ -360,7 +366,12 @@ final class NotchController {
             guard let self else { return }
             let wasDragging = self.fileDragActive
             self.updateFileDrag()
-            if self.fileDragActive != wasDragging { dragLog("file drag \(self.fileDragActive ? "started" : "ended")") }
+            if self.fileDragActive != wasDragging {
+                dragLog("file drag \(self.fileDragActive ? "started" : "ended")")
+                self.model.fileDragging = self.fileDragActive
+                self.forceRedraw()
+                postWake()
+            }
             let inside = self.cursorInside
             if self.panel.ignoresMouseEvents == inside { self.panel.ignoresMouseEvents = !inside }
             if self.wantsShelf {

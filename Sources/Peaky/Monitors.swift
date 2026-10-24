@@ -475,9 +475,22 @@ final class ShelfStore: ObservableObject {
         items = paths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
+    /// What was just dropped, highlighted for a few seconds ("2 added").
+    @Published private(set) var justAdded = Set<URL>()
+    private var justAddedWork: DispatchWorkItem?
+
+    /// Dropped files go to the top (dropping one that's already here moves it up), so they're always in view.
     func add(_ urls: [URL]) {
-        for u in urls where !items.contains(u) { items.append(u) }
+        var seen = Set<URL>()
+        let dropped = urls.filter { seen.insert($0).inserted }
+        items.removeAll { seen.contains($0) }
+        items.insert(contentsOf: dropped, at: 0)
         save()
+        justAdded = seen
+        justAddedWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in self?.justAdded = [] }
+        justAddedWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: w)
     }
 
     func remove(_ url: URL) {

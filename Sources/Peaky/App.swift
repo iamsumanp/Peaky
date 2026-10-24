@@ -339,6 +339,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let m = controllers.first?.model
         switch cmd {
         case "expand": m?.expand(tab: .home)
+        case "shelfdrop":
+            // As if two files were just dropped (they go on top, highlighted).
+            let a = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"), b = URL(fileURLWithPath: "/Applications/Safari.app")
+            Services.shared.shelf.add([a, b]); m?.expand(tab: .shelf)
+        case "shelfundrop":
+            [URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"), URL(fileURLWithPath: "/Applications/Safari.app")]
+                .forEach(Services.shared.shelf.remove)
+        case "dragon", "dragoff": m?.fileDragging = cmd == "dragon"
         case "hidemeeting":
             let cal = Services.shared.calendar
             if let e = cal.agenda { cal.hide(e) }
