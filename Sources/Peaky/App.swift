@@ -8,7 +8,7 @@ enum Prefs {
     enum Key: String {
         case display, openOnHover, showMusicActivity, showHUD, hudReplace, pet
         case awakeDisplay, awakeDefault, awakeAtLaunch
-        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates, hideFromCapture, claudeShowWorking
+        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates, hideFromCapture, claudeShowWorking, shelfExpireHours
     }
 
     static func register() {
@@ -25,6 +25,7 @@ enum Prefs {
             Key.checkUpdates.rawValue: true,
             Key.hideFromCapture.rawValue: true,
             Key.claudeShowWorking.rawValue: true,
+            Key.shelfExpireHours.rawValue: 0.0,
             Key.showMusicActivity.rawValue: true,
             Key.showHUD.rawValue: true,
             Key.hudReplace.rawValue: false,
@@ -517,6 +518,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.Key.claudeQuietWhenFront.rawValue) private var claudeQuiet = true
     @AppStorage(Prefs.Key.hideFromCapture.rawValue) private var hideFromCapture = true
     @AppStorage(Prefs.Key.claudeShowWorking.rawValue) private var claudeWorking = true
+    @AppStorage(Prefs.Key.shelfExpireHours.rawValue) private var shelfExpire = 0.0
 
     @ObservedObject private var cal = Services.shared.calendar
     @State private var trusted = MediaKeyTap.trusted
@@ -557,6 +559,22 @@ struct SettingsView: View {
                 Text("Keep Awake")
             } footer: {
                 Text("Like Caffeine: stops your Mac from sleeping. Toggle it with the ☕ in the open island (right-click for durations) or from the menu bar icon. A small white mug sits beside the notch while it's on.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Remove files from the shelf", selection: $shelfExpire) {
+                    Text("Never").tag(0.0)
+                    Text("After 1 hour").tag(1.0)
+                    Text("After 4 hours").tag(4.0)
+                    Text("After 1 day").tag(24.0)
+                    Text("After 1 week").tag(168.0)
+                }
+                .onChange(of: shelfExpire) { Services.shared.shelf.prune() }
+            } header: {
+                Text("Shelf")
+            } footer: {
+                Text("Each file goes that long after you dropped it. Only off the shelf — the files themselves stay where they are.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

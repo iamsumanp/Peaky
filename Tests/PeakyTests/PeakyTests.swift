@@ -209,3 +209,27 @@ import Testing
         #expect(shelf.justAdded == [c, a])
     }
 }
+
+@Suite(.serialized) struct ShelfExpiry {
+    @Test func eachFileExpiresOnItsOwnClock() {
+        let key = Prefs.Key.shelfExpireHours.rawValue
+        let before = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(before, forKey: key) }
+        let shelf = ShelfStore()
+        shelf.clear()
+        let old = URL(fileURLWithPath: "/tmp/old"), fresh = URL(fileURLWithPath: "/tmp/fresh")
+        shelf.add([old, fresh])
+        let now = Date()
+        shelf.setAdded(old, at: now.addingTimeInterval(-5 * 3600))
+        shelf.setAdded(fresh, at: now.addingTimeInterval(-10 * 60))
+
+        UserDefaults.standard.set(0.0, forKey: key)        // Never
+        shelf.prune(now: now)
+        #expect(shelf.items.count == 2)
+
+        UserDefaults.standard.set(4.0, forKey: key)        // After 4 hours: only the 5-hour-old one goes
+        shelf.prune(now: now)
+        #expect(shelf.items == [fresh])
+        shelf.clear()
+    }
+}

@@ -198,9 +198,34 @@ final class IslandModel: ObservableObject {
     private var workTimer: Timer?
 
     /// The working sessions worth showing: not the one already asking for you, not one in the app you're in.
+    /// Apps hosting a Claude session that aren't open right now (quit, or running with no window):
+    /// their Claude statuses stay out of the notch until a window is back.
+    @Published private(set) var closedHosts = Set<String>() { didSet { revision &+= 1 } }
+
+    private func hostClosed(_ app: String?) -> Bool { app.map(closedHosts.contains) ?? false }
+
+    /// Checked on each Claude event, app switch and the 30 s tick — never polled continuously.
+    func refreshHostWindows() {
+        let apps = Set(claudeWorking.values.compactMap { $0.focus?.app } + [claudeWaiting?.focus?.app].compactMap { $0 })
+        guard !apps.isEmpty else { if !closedHosts.isEmpty { closedHosts = [] }; return }
+        // Window owners and layers are readable without Screen Recording permission (titles aren't needed).
+        let windows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let ownersWithWindows = Set(windows.compactMap { w -> pid_t? in
+            guard (w[kCGWindowLayer as String] as? Int) == 0,
+                  let b = w[kCGWindowBounds as String] as? [String: Any], (b["Height"] as? Double ?? 0) > 50 else { return nil }
+            return w[kCGWindowOwnerPID as String] as? pid_t
+        })
+        let closed = Set(apps.filter { app in
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: app)
+            return running.isEmpty || !running.contains { ownersWithWindows.contains($0.processIdentifier) }
+        })
+        if closed != closedHosts { withAnimation(Self.spring) { closedHosts = closed } }
+    }
+
     private var visibleWork: [ClaudeWork] {
         guard Prefs.bool(.claudeShowWorking) else { return [] }
         return claudeWorking.values
+            .filter { !hostClosed($0.focus?.app) }
             .filter { $0.key != claudeWaiting?.key }
             .filter { !(Prefs.bool(.claudeQuietWhenFront) && $0.focus?.app != nil && $0.focus?.app == frontApp) }
             .sorted { $0.started < $1.started }
@@ -217,12 +242,13 @@ final class IslandModel: ObservableObject {
             let stale = self.claudeWorking.filter { Date().timeIntervalSince($0.value.beat) > 20 * 60 }.map(\.key)
             if !stale.isEmpty { self.workingChanged { stale.forEach { self.claudeWorking[$0] = nil } } }
             self.workTick &+= 1
+            self.refreshHostWindows()
         }
     }
 
     /// Left-slot priority: Claude needs you > a download in progress > meeting (15 min before → end).
     var status: StatusItem? {
-        if let c = claudeWaiting, !lookingAt(c) {
+        if let c = claudeWaiting, !lookingAt(c), !hostClosed(c.focus?.app) {
             return StatusItem(kind: .claude, title: c.title, detail: c.detail ?? "Needs you", tint: c.tint,
                               bar: nil, symbol: c.symbol, openURL: c.openURL,
                               actionLabel: c.openURL == nil && c.focus == nil ? nil : "Open", ask: c.ask, focus: c.focus)
@@ -297,6 +323,13 @@ final class IslandModel: ObservableObject {
             .compactMap { ($0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier }
             .sink { [weak self] id in self?.frontAppChanged(id) }
             .store(in: &bag)
+        // The app a Claude session runs in was closed: nothing more will come from it (Claude Code sends no
+        // final event then), so drop its working spark and any waiting alert right away.
+        NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didTerminateApplicationNotification)
+            .compactMap { ($0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier }
+            .sink { [weak self] id in self?.hostAppQuit(id) }
+            .store(in: &bag)
         let player = Services.shared.nowPlaying
         player.$duration.combineLatest(player.$recentlyActive, player.$title)
             .map { d, active, title in d > 1 && active && !title.isEmpty }
@@ -353,8 +386,18 @@ final class IslandModel: ObservableObject {
             .store(in: &bag)
     }
 
+    private func hostAppQuit(_ id: String) {
+        defer { refreshHostWindows() }
+        let gone = claudeWorking.filter { $0.value.focus?.app == id }.map(\.key)
+        if !gone.isEmpty { workingChanged { gone.forEach { claudeWorking[$0] = nil } } }
+        if claudeWaiting?.focus?.app == id { setClaudeWaiting(nil) }
+        queue.removeAll { $0.focus?.app == id }
+        if notice?.focus?.app == id { endNotice(force: true) }
+    }
+
     private func frontAppChanged(_ id: String) {
         withAnimation(Self.spring) { frontApp = id }
+        refreshHostWindows()
         // Switched to the app a Claude popup is about: it has done its job.
         guard Prefs.bool(.claudeQuietWhenFront) else { return }
         queue.removeAll { $0.focus?.app == id }
@@ -580,6 +623,7 @@ final class IslandModel: ObservableObject {
                 withAnimation(Self.close) { self?.hud = nil }
             }
         case .working(let w):
+            defer { refreshHostWindows() }
             workingChanged {
                 if var cur = claudeWorking[w.key], !w.restart {
                     cur.beat = Date()
@@ -598,8 +642,9 @@ final class IslandModel: ObservableObject {
         case .notice(var n):
             // "Finished" (any non-waiting alert for that session): it's no longer working.
             if !n.sticky, let key = n.key, claudeWorking[key] != nil { workingChanged { claudeWorking[key] = nil } }
-            if lookingAt(n) {
-                // You're already in the app this Claude session runs in: no popup. A wait is still kept
+            if n.focus?.app != nil { refreshHostWindows() }
+            if lookingAt(n) || hostClosed(n.focus?.app) {
+                // You're already in the app this Claude session runs in, or it isn't open at all: no popup. A wait is still kept
                 // (hidden) so it appears if you switch away before answering.
                 if n.sticky {
                     if n.ask == nil, n.key == claudeWaiting?.key { n.ask = claudeWaiting?.ask }

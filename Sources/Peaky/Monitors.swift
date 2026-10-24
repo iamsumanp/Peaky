@@ -470,9 +470,35 @@ final class ShelfStore: ObservableObject {
     @Published private(set) var items: [URL] = []
     private let key = "shelf.paths"
 
+    /// When each file went on the shelf (path → seconds since 1970), for "Remove files after…".
+    private var addedAt: [String: Double]
+    private let addedKey = "shelf.addedAt"
+    private var expiryTimer: Timer?
+
     init() {
         let paths = UserDefaults.standard.stringArray(forKey: key) ?? []
         items = paths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        addedAt = UserDefaults.standard.dictionary(forKey: addedKey) as? [String: Double] ?? [:]
+        // Files from before this setting existed start their clock now, so nothing vanishes at once.
+        let now = Date().timeIntervalSince1970
+        for u in items where addedAt[u.path] == nil { addedAt[u.path] = now }
+        prune()
+        expiryTimer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in self?.prune() }
+    }
+
+    /// Settings → Shelf: take files off the shelf this long after they were added (0 = never).
+    static var expiry: TimeInterval { UserDefaults.standard.double(forKey: Prefs.Key.shelfExpireHours.rawValue) * 3600 }
+
+    /// Remove files older than the chosen time. `now` is injectable for tests.
+    func prune(now: Date = Date()) {
+        let limit = Self.expiry
+        guard limit > 0 else { return }
+        let cutoff = now.timeIntervalSince1970 - limit
+        let old = items.filter { (addedAt[$0.path] ?? now.timeIntervalSince1970) < cutoff }
+        guard !old.isEmpty else { return }
+        items.removeAll { old.contains($0) }
+        old.forEach { addedAt[$0.path] = nil }
+        save()
     }
 
     /// What was just dropped, highlighted for a few seconds ("2 added").
@@ -485,6 +511,8 @@ final class ShelfStore: ObservableObject {
         let dropped = urls.filter { seen.insert($0).inserted }
         items.removeAll { seen.contains($0) }
         items.insert(contentsOf: dropped, at: 0)
+        let now = Date().timeIntervalSince1970
+        dropped.forEach { addedAt[$0.path] = now }
         save()
         justAdded = seen
         justAddedWork?.cancel()
@@ -495,15 +523,21 @@ final class ShelfStore: ObservableObject {
 
     func remove(_ url: URL) {
         items.removeAll { $0 == url }
+        addedAt[url.path] = nil
         save()
     }
 
     func clear() {
         items.removeAll()
+        addedAt.removeAll()
         save()
     }
 
     private func save() {
         UserDefaults.standard.set(items.map(\.path), forKey: key)
+        UserDefaults.standard.set(addedAt, forKey: addedKey)
     }
+
+    /// Tests: pretend a file went on the shelf at this time.
+    func setAdded(_ url: URL, at date: Date) { addedAt[url.path] = date.timeIntervalSince1970 }
 }

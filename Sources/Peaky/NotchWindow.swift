@@ -98,6 +98,7 @@ final class NotchController {
 
     var debugState: String {
         "size=\(Int(model.size(for: model.presentation).width))x\(Int(model.size(for: model.presentation).height)) xoff=\(model.xOffset(for: model.presentation)) " +
+        "closedHosts=\(model.closedHosts.sorted()) work=\(model.claudeWorking.count) showWorking=\(Prefs.bool(.claudeShowWorking)) " +
         "pres=\(model.presentation) expanded=\(model.expanded) hovering=\(model.hovering) ignoresMouse=\(panel.ignoresMouseEvents) " +
         "tracking=\(pollTimer != nil) | swiftui body=\(RenderProbe.bodyPresentation) \(String(format: "%.2fs ago", -RenderProbe.bodyAt.timeIntervalSinceNow)) " +
         "laidOutWidth=\(Int(RenderProbe.width)) \(String(format: "%.2fs ago", -RenderProbe.at.timeIntervalSinceNow)) | hostingLayer=\(Int(panel.contentView?.layer?.sublayers?.first?.bounds.width ?? -1))"
