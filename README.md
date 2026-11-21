@@ -20,7 +20,7 @@ Music, meetings, Claude Code, downloads, a file shelf, Keep Awake, and a pixel c
 
 The notch stays a notch. Peaky only grows when there is something worth showing, and it opens when you hover over it.
 
-- **Music.** Album art and live bars while anything plays: Spotify, Apple Music, YouTube in a browser, and so on. Hover to see the track and controls; click to open the full player, which has a progress bar you can click or drag to jump around in the track. It goes away a minute after you pause.
+- **Music.** Album art and live bars while anything plays: Spotify, Apple Music, YouTube in a browser, and so on. Hover to see the track and controls; click to open the full player, which has a progress bar you can click or drag to jump around in the track. It goes away a minute after you pause. Turn on **Settings → Island → Bars follow the music** and the bars move with the sound itself (bass on the left, treble on the right), like the iPhone's Dynamic Island. Peaky listens only to the app that's playing, only while the bars are on screen, and only measures how loud each band is. It records and keeps nothing.
 - **Meetings.** From 15 minutes before a meeting starts, the notch shows the title on one side and the time on the other ("in 10 mins", "1 hr 2 mins left"). It has a **Join** button for Meet, Zoom, Teams, Webex, Jitsi, and Slack huddles. When a meeting ends, the next one shows up ("Next: Standup"). The menu-bar icon lists today's meetings, MeetingBar-style. Meetings you declined are hidden.
 - **Claude Code.** While a session works, Claude's spark sits beside the notch; open the island for "Claude · my-app · working 4m" (it can be turned off). You get "Finished", "Needs permission", and "Has a question" the moment they happen, labelled with the project name ("Claude · my-app"). Click the alert to jump back to that session's Terminal or iTerm tab, or its VS Code / Cursor window. In the Claude app you can also **Allow or Deny** a permission request right from the notch. Peaky stays quiet while you're already looking at the app the session runs in; if you switch away while Claude still needs you, the alert shows up then. See [Claude Code setup](#claude-code-setup).
 - **Downloads.** While a browser downloads into `~/Downloads`, the notch shows the file name and percentage, then "Downloaded". Click it to see the file in Finder.
@@ -29,6 +29,7 @@ The notch stays a notch. Peaky only grows when there is something worth showing,
 - **Volume / brightness.** A clean bar in the notch. Optionally, it replaces the system HUD.
 - **Alerts.** One short popup for AirPods and other Bluetooth devices connecting, for charging, and for low battery.
 - **Pet.** A pixel cat (or dog, or bunny) sits beside the notch when nothing else is going on. Off by default.
+- **Stays out of the way.** With Accessibility allowed, the collapsed island never covers your menu bar icons or the app's menus: if there's no room beside the notch, the time moves next to the title, the bars move to the other side, or the extra bit is left out.
 - **Any monitor.** On screens without a notch, Peaky draws a compact one. You choose which displays get it, and whether it stays visible over full-screen apps on each one.
 - **Private in screen shares.** By default, Peaky is invisible to screen sharing and recording (Meet, Zoom, Teams…), so nobody sees your Claude alerts, meeting titles or shelf. Your own screenshots skip it too. Turn it off in Settings → Island.
 
@@ -43,7 +44,7 @@ Everything is in **Settings** (menu-bar icon → Settings…). Peaky checks GitH
 3. Allow what it asks for:
    - **Calendar**, for meetings.
    - **Bluetooth**, for AirPods alerts.
-   - Later, if you use those features: **Accessibility** (only for "Replace the system volume & brightness HUD") and **Automation** for Terminal / iTerm (only when you click a Claude alert to jump to its tab).
+   - Later, if you use those features: **Accessibility** (to keep the island clear of menu bar icons, and for "Replace the system volume & brightness HUD"), **System Audio Recording** (only for "Bars follow the music") and **Automation** for Terminal / iTerm (only when you click a Claude alert to jump to its tab).
 
 Peaky lives in the notch and the menu bar; there is no Dock icon. To quit, use the menu-bar icon → **Quit Peaky**.
 
@@ -113,7 +114,7 @@ cd Peaky && ./build.sh
 
 - `./build.sh` builds the app, installs it to `~/Applications`, and starts it.
 - `./build.sh --dmg` builds `build/Peaky-<version>.dmg` instead.
-- `tools/test.sh` runs the tests: version checks, the Claude hooks editor, meeting timing, the signed channel and the formatters.
+- `tools/test.sh` runs the tests: version checks, the Claude hooks editor, meeting timing, the signed channel, the formatters, the shelf and the music bars' bass / treble split.
 - `PEAKY_DEBUG=1 ./build.sh` adds the debug commands used by `tools/debug.sh`, for previewing states from a terminal. Release builds and DMGs never include them.
 
 The build is ad-hoc signed, which means macOS may ask for permissions again after each rebuild. A self-signed certificate avoids that; see [tools/make-signing-cert.md](tools/make-signing-cert.md).
@@ -126,6 +127,8 @@ The build is ad-hoc signed, which means macOS may ask for permissions again afte
 | Now Playing for any app. It runs through `/usr/bin/perl`, because MediaRemote only answers Apple-signed processes since macOS 15.4 | `Helper/PeakyMedia.m`, `Sources/Peaky/NowPlaying.swift` |
 | Calendar, Bluetooth, battery, shelf storage | `Sources/Peaky/Monitors.swift` |
 | Claude sessions, Allow / Deny, jump to session | `Sources/Peaky/ClaudeSession.swift`, `tools/peaky-cli.swift` |
+| Bars that follow the music (CoreAudio process tap + FFT) | `Sources/Peaky/LiveAudio.swift` |
+| Free space in the menu bar beside the notch | `Sources/Peaky/MenuBarSpace.swift` |
 | Downloads, Keep Awake, displays, settings | `Downloads.swift`, `Awake.swift`, `Displays.swift`, `App.swift` |
 
 ## Notes

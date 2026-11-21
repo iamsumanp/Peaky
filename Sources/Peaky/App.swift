@@ -8,7 +8,7 @@ enum Prefs {
     enum Key: String {
         case display, openOnHover, showMusicActivity, showHUD, hudReplace, pet
         case awakeDisplay, awakeDefault, awakeAtLaunch
-        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates, hideFromCapture, claudeShowWorking, shelfExpireHours
+        case notifyCharging, notifyBluetooth, notifyCalendar, claudeWaitSeconds, claudeNotchApprove, claudeQuietWhenFront, checkUpdates, hideFromCapture, claudeShowWorking, shelfExpireHours, liveBars
     }
 
     static func register() {
@@ -26,6 +26,7 @@ enum Prefs {
             Key.hideFromCapture.rawValue: true,
             Key.claudeShowWorking.rawValue: true,
             Key.shelfExpireHours.rawValue: 0.0,
+            Key.liveBars.rawValue: false,
             Key.showMusicActivity.rawValue: true,
             Key.showHUD.rawValue: true,
             Key.hudReplace.rawValue: false,
@@ -71,6 +72,7 @@ final class Services {
         bluetooth.start()
         calendar.start()
         downloads.start()
+        MenuBarSpace.shared.start()
         awake.restore()
         if !awake.active, Prefs.bool(.awakeAtLaunch) { awake.start(for: KeepAwake.defaultDuration, announce: false) }
         applyPrefs()
@@ -185,7 +187,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.joined(separator: ",")
         controllers.forEach { $0.tearDown() }
         controllers = Displays.selectedScreens.map { NotchController(screen: $0) }
+        applyMenuBarRoom()
         if locked { controllers.forEach { $0.setLocked(true) } }
+    }
+
+    /// Each island keeps to the free menu bar beside its notch.
+    private func applyMenuBarRoom() {
+        MenuBarSpace.shared.onChange = { [weak self] in self?.applyMenuBarRoom() }
+        for c in controllers {
+            let room = MenuBarSpace.shared.room(on: c.screen)
+            if room != c.model.room { withAnimation(IslandModel.spring) { c.model.room = room } }
+        }
     }
 
     private func buildStatusItem() {
@@ -401,6 +413,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case "track": controllers.forEach { $0.startTracking() }
         case "fakein": controllers.forEach { $0.fakeMouse = $0.notchCentre; $0.startTracking() }
         case "fakeout": controllers.forEach { $0.fakeMouse = CGPoint(x: $0.notchCentre.x, y: $0.notchCentre.y - 400) }
+        case "roomtight", "roomnone", "roomreal":
+            // Pretend the menu bar is crowded (roomtight: 60 left / 20 right; roomnone: nothing free) or read it again.
+            MenuBarSpace.shared.onChange = {}
+            let r = cmd == "roomtight" ? MenuBarRoom(left: 60, right: 20) : MenuBarRoom(left: 0, right: 0)
+            if cmd == "roomreal" { applyMenuBarRoom() } else { controllers.forEach { $0.model.room = r } }
+        case "menubar":
+            MenuBarSpace.shared.refresh()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                try? (MenuBarSpace.shared.debugState + "\n").write(toFile: "/tmp/peaky-state.txt", atomically: true, encoding: .utf8)
+            }
+        case "levels":
+            try? (LiveAudio.shared.debugState + "\n").write(toFile: "/tmp/peaky-state.txt", atomically: true, encoding: .utf8)
+        case "fakelevels":
+            LiveAudio.shared.debugFake = true
+            Services.shared.nowPlaying.debugForcePlaying(true)
+        case "liveon", "liveoff":
+            UserDefaults.standard.set(cmd == "liveon", forKey: Prefs.Key.liveBars.rawValue)
+            LiveAudio.shared.settingChanged()
         case "state":
             let lines = controllers.map { $0.debugState }.joined(separator: "\n")
             try? (lines + "\n").write(toFile: "/tmp/peaky-state.txt", atomically: true, encoding: .utf8)
@@ -519,6 +549,8 @@ struct SettingsView: View {
     @AppStorage(Prefs.Key.hideFromCapture.rawValue) private var hideFromCapture = true
     @AppStorage(Prefs.Key.claudeShowWorking.rawValue) private var claudeWorking = true
     @AppStorage(Prefs.Key.shelfExpireHours.rawValue) private var shelfExpire = 0.0
+    @AppStorage(Prefs.Key.liveBars.rawValue) private var liveBars = false
+    @State private var audioAccess = LiveAudio.access
 
     @ObservedObject private var cal = Services.shared.calendar
     @State private var trusted = MediaKeyTap.trusted
@@ -581,6 +613,33 @@ struct SettingsView: View {
             Section("Island") {
                 Toggle("Open instantly on hover (otherwise click)", isOn: $openOnHover)
                 Toggle("Show music as a live activity", isOn: $showMusic)
+                Toggle("Bars follow the music", isOn: $liveBars)
+                    .onChange(of: liveBars) {
+                        guard liveBars, audioAccess != .allowed else { LiveAudio.shared.settingChanged(); return }
+                        LiveAudio.requestAccess { _ in
+                            audioAccess = LiveAudio.access
+                            LiveAudio.shared.settingChanged()
+                        }
+                    }
+                    .help("The music bars move with the sound — bass on the left, treble on the right — like the iPhone's Dynamic Island. macOS asks once for System Audio Recording: Peaky only measures how loud each band is, and records or keeps nothing.")
+                if !trusted {
+                    HStack {
+                        Text("Allow Accessibility so the island keeps clear of menu bar icons and app menus")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Allow…") { MediaKeyTap.requestTrust() }
+                            .controlSize(.small)
+                    }
+                }
+                if liveBars, audioAccess == .denied {
+                    HStack {
+                        Text("Needs System Audio Recording permission")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Open Privacy Settings…") { NSWorkspace.shared.open(LiveAudio.privacyPane) }
+                            .controlSize(.small)
+                    }
+                }
                 Toggle("Hide Peaky from screen sharing", isOn: $hideFromCapture)
                     .onChange(of: hideFromCapture) { NotchPanel.applyCapturePrivacy() }
                     .help("When you share your screen (Meet, Zoom, Teams…) or record it, the island isn't in the picture, so nobody sees your Claude alerts, meeting titles or shelf. Your own screenshots skip it too.")
@@ -678,7 +737,12 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 460, height: 660)
-        .onReceive(poll) { _ in trusted = MediaKeyTap.trusted }
+        .onReceive(poll) { _ in
+            let nowTrusted = MediaKeyTap.trusted
+            if nowTrusted != trusted { trusted = nowTrusted; MenuBarSpace.shared.refresh() }
+            let access = LiveAudio.access
+            if access != audioAccess { audioAccess = access; LiveAudio.shared.settingChanged() }
+        }
     }
 }
 

@@ -158,6 +158,9 @@ final class IslandModel: ObservableObject {
     private(set) var lastNotice: Notice?
     @Published private(set) var musicActive = false { didSet { revision &+= 1 } }
     @Published private(set) var pet: PetKind = .none { didSet { revision &+= 1 } }
+    /// Free menu bar beside the notch (see MenuBarSpace). Compact content that doesn't fit is moved or left out,
+    /// so the island never covers the app's menus or the menu bar icons.
+    @Published var room = MenuBarRoom.unlimited { didSet { revision &+= 1 } }
     @Published var dropTargeted = false { didSet { revision &+= 1 } }
     /// A file is being dragged somewhere on screen (the shelf shows a big drop area, away from the screen edge).
     @Published var fileDragging = false { didSet { revision &+= 1 } }
@@ -188,7 +191,7 @@ final class IslandModel: ObservableObject {
     /// Keep-awake on: a small cup rides at the right end of every compact state.
     @Published private(set) var caffeinated = false { didSet { revision &+= 1 } }
     static let cupWidth: CGFloat = 26
-    var cup: CGFloat { caffeinated ? Self.cupWidth : 0 }
+    var cup: CGFloat { showsCup ? Self.cupWidth : 0 }
     private var claudeWaitTimer: Timer?
 
     /// Claude sessions that are working right now (prompt sent → Finished / idle), by session key.
@@ -277,7 +280,8 @@ final class IslandModel: ObservableObject {
         // Keep Awake takes the left side only when it's free (music puts its artwork there) and a pet
         // holds the right; with no pet, the mug simply sits in the pet's place on the right instead.
         let awake = Services.shared.awake
-        if awake.active, !musicActive, pet != .none {
+        // (With menu bar icons crowding the right side, the mug moves to the left in the same way.)
+        if awake.active, !musicActive, pet != .none || !petFits {
             return StatusItem(kind: .awake, title: "Awake", detail: awake.until == nil ? "∞" : awake.remainingShort,
                               tint: Theme.accent, bar: nil, symbol: nil, openURL: nil, actionLabel: nil)
         }
@@ -437,7 +441,7 @@ final class IslandModel: ObservableObject {
         // With "Open instantly on hover" off, hovering music doesn't grow either; a click opens the player.
         if musicActive { return hovering && Prefs.bool(.openOnHover) ? .peek : .music }
         if status != nil { return .status }
-        if pet != .none { return .pet }
+        if pet != .none, petFits { return .pet }
         return .idle
     }
 
@@ -448,7 +452,7 @@ final class IslandModel: ObservableObject {
         switch p {
         case .idle:
             // No pet, Keep Awake on: the mug sits in the pet's place.
-            if geo.hasNotch { return CGSize(width: n.width + (hovering ? 8 : 0) + (caffeinated ? Self.petEar : 0),
+            if geo.hasNotch { return CGSize(width: n.width + (hovering ? 8 : 0) + (showsMug ? Self.petEar : 0),
                                             height: hovering ? h + 2 : h) }
             return CGSize(width: n.width, height: hovering ? h : 0)
         case .status:
@@ -457,10 +461,8 @@ final class IslandModel: ObservableObject {
             // The pet wears the coffee as a hat, so no extra cup slot here.
             return geo.hasNotch ? CGSize(width: n.width + Self.petEar, height: h) : CGSize(width: Self.petEar + 12, height: h)
         case .music:
-            // With something important on the left, music keeps only its bars on the right.
-            // Music next to a status: just the bars (no artwork, no cup) — two things, each at its smallest.
-            if status != nil { return CGSize(width: n.width + statusLeftEar + Self.musicBarsEar, height: h) }
-            return CGSize(width: n.width + Self.musicLeftEar(h) + Self.musicBarsEar + cup, height: h)
+            let ears = musicEars
+            return CGSize(width: n.width + ears.left + ears.right, height: h)
         case .peek:
             return CGSize(width: max(n.width + 230, geo.isVirtual ? 340 : 420),
                           height: h + 50 + (showsStatusLine ? statusLineH : 0))
@@ -506,6 +508,7 @@ final class IslandModel: ObservableObject {
     /// Music alone: artwork on the left, bars on the right.
     static func musicLeftEar(_ h: CGFloat) -> CGFloat { 10 + artSize(h) + innerGap }
     static let musicBarsEar: CGFloat = innerGap + 17 + 12
+    static let musicBarsTightEar: CGFloat = innerGap + 17 + 7
     static let hudEar: CGFloat = 78
     static let noticeTitleFont = Theme.nsTitle(12)
     static let noticeDetailFont = Theme.nsBody(11.5)
@@ -529,13 +532,12 @@ final class IslandModel: ObservableObject {
     func xOffset(for p: Presentation) -> CGFloat {
         guard geo.hasNotch else { return 0 }
         switch p {
-        case .idle: return caffeinated ? Self.petEar / 2 : 0
+        case .idle: return showsMug ? Self.petEar / 2 : 0
         case .pet: return Self.petEar / 2
         case .status: return (statusRightEar - statusLeftEar) / 2
         case .music:
-            let h = geo.notch.height
-            return status == nil ? (Self.musicBarsEar + cup - Self.musicLeftEar(h)) / 2
-                                 : (Self.musicBarsEar - statusLeftEar) / 2
+            let ears = musicEars
+            return (ears.right - ears.left) / 2
         default: return 0
         }
     }
@@ -548,10 +550,67 @@ final class IslandModel: ObservableObject {
     /// A permission request gets a second line (what Claude wants to run) and Allow / Deny.
     var statusLineH: CGFloat { status?.ask != nil ? 44 : Self.statusLineHeight }
 
-    /// Meeting / Claude with the right side free (no music): title left of the notch, time right of it.
+    // MARK: Fitting the menu bar
+
+    /// The pet (or the Keep Awake mug in its place) right of the notch.
+    var petFits: Bool { Self.petEar <= room.right }
+    var showsMug: Bool { caffeinated && petFits }
+
+    /// Music on its own puts its bars right of the notch; if the menu bar icons leave no room there, the bars
+    /// take the artwork's place on the left.
+    var musicBarsOnLeft: Bool { status == nil && musicBarsRightEar == nil && Self.musicBarsEar <= room.left }
+    var musicBarsShown: Bool { musicBarsRightEar != nil || musicBarsOnLeft }
+    /// The bars' slot right of the notch: the usual one, a tighter one (less padding at the end) when that's what
+    /// it takes to fit, or nil when neither fits.
+    var musicBarsRightEar: CGFloat? {
+        if Self.musicBarsEar <= room.right { return Self.musicBarsEar }
+        return Self.musicBarsTightEar <= room.right ? Self.musicBarsTightEar : nil
+    }
+    /// Padding after the bars on the right.
+    var musicBarsTrailing: CGFloat { (musicBarsRightEar ?? Self.musicBarsEar) - Self.innerGap - 17 }
+    var musicArtShown: Bool { status == nil && !musicBarsOnLeft && Self.musicLeftEar(geo.notch.height) <= room.left }
+
+    /// The music state's two ears. Next to a status it's just the status and the bars (no artwork, no cup) —
+    /// two things, each at its smallest.
+    var musicEars: (left: CGFloat, right: CGFloat) {
+        if status != nil { return (statusLeftEar, musicBarsRightEar ?? 0) }
+        let left = musicArtShown ? Self.musicLeftEar(geo.notch.height) : musicBarsOnLeft ? Self.musicBarsEar : 0
+        let right = (musicBarsOnLeft ? 0 : musicBarsRightEar ?? 0) + cup
+        return (left, right)
+    }
+
+    /// Keep Awake's cup at the right end of a compact state, when there's room for it after what's there.
+    var showsCup: Bool {
+        guard caffeinated else { return false }
+        let before: CGFloat
+        if musicActive {
+            guard status == nil else { return false }
+            before = musicBarsOnLeft ? 0 : musicBarsRightEar ?? 0
+        } else {
+            before = statusSplit ? statusDetailWidth : 0
+        }
+        return before + Self.cupWidth <= room.right
+    }
+
+    /// The status's time on its own, right of the notch.
+    private var statusDetailWidth: CGFloat {
+        guard let s = status else { return 0 }
+        return (s.detail as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width + Self.innerGap + 12
+    }
+
+    /// Meeting / Claude with the right side free (no music): title left of the notch, time right of it — unless
+    /// the menu bar icons leave no room for the time there, then it follows the title.
     var statusSplit: Bool {
         guard let s = status else { return false }
-        return !s.isGlyph && !musicActive
+        return !s.isGlyph && !musicActive && statusDetailWidth <= room.right
+    }
+
+    /// How wide the status title may get left of the notch: its usual limit, or less if the app's menus are close.
+    var statusTitleLimit: CGFloat {
+        guard let s = status else { return 0 }
+        let lead: CGFloat = s.symbol != nil ? 16 + 6 : 3 + 7
+        let d = statusSplit ? 0 : 5 + (("· " + (s.inline ?? s.detail)) as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width
+        return max(30, min(s.titleMax, room.left - (12 + lead + d + Self.innerGap)))
     }
 
     /// Colour bar (or icon) + title — plus "· in 10 mins" when it isn't split to the right.
@@ -560,7 +619,7 @@ final class IslandModel: ObservableObject {
         // Same width as the pet's slot, so the mug and the pet sit symmetrically around the notch.
         if s.isGlyph { return Self.petEar }
         let lead: CGFloat = s.symbol != nil ? 16 + 6 : 3 + 7
-        let t = min((s.title as NSString).size(withAttributes: [.font: Self.agendaTitleFont]).width, s.titleMax)
+        let t = min((s.title as NSString).size(withAttributes: [.font: Self.agendaTitleFont]).width, statusTitleLimit)
         let d = statusSplit ? 0 : 5 + (("· " + (s.inline ?? s.detail)) as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width
         return (12 + lead + t + d + Self.innerGap).rounded(.up)
     }
@@ -569,11 +628,10 @@ final class IslandModel: ObservableObject {
     /// beside the Keep Awake mug.
     var statusRightEar: CGFloat {
         guard let s = status else { return 0 }
-        if s.kind == .awake { return pet != .none ? Self.petEar : 0 }
+        if s.kind == .awake { return pet != .none && petFits ? Self.petEar : 0 }
         // Claude working (just its spark on the left): no pet, nothing on the right but the Keep Awake cup.
         if s.kind == .working { return cup }
-        let d = statusSplit ? (s.detail as NSString).size(withAttributes: [.font: Self.agendaDetailFont]).width + Self.innerGap + 12 : 0
-        return (d + cup).rounded(.up)
+        return ((statusSplit ? statusDetailWidth : 0) + cup).rounded(.up)
     }
 
     func radii(for p: Presentation) -> (top: CGFloat, bottom: CGFloat) {

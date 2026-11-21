@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Clicking a Claude alert brings its Terminal or iTerm tab to the front.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Lets the music bars move with the sound. Peaky only measures how loud the bass, mids and treble are; nothing is recorded or kept.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Peaky shows a notch alert when AirPods and other Bluetooth devices connect.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

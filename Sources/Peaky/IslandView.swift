@@ -82,7 +82,7 @@ struct IslandView: View {
                     }
                     .frame(height: h)
                 }
-                layer(p == .idle && model.caffeinated, size: model.size(for: .idle)) {
+                layer(p == .idle && model.showsMug, size: model.size(for: .idle)) {
                     // No pet: the mug sits where the pet would.
                     HStack(spacing: 0) {
                         Spacer(minLength: 0)
@@ -174,21 +174,29 @@ struct MusicLiveView: View {
                     .padding(.trailing, 4)
                     .frame(width: model.statusLeftEar, height: height, alignment: .trailing)
             } else if let s = model.status {
-                StatusSlot(item: s)
+                StatusSlot(item: s, titleLimit: model.statusTitleLimit)
                     .padding(.leading, 12)
                     .frame(width: model.statusLeftEar, alignment: .leading)
-            } else {
+            } else if model.musicArtShown {
                 ArtworkView(image: np.artwork, size: height - (height > 30 ? 14 : 8))
                     .padding(.leading, 10)
+            } else if model.musicBarsOnLeft {
+                // Menu bar icons crowd the right side: the bars take the artwork's place.
+                bars.padding(.leading, 12)
             }
             Spacer(minLength: 0)
             // With the left side taken, music is just its bars (and no cup): two things, each at its smallest.
-            Visualizer(playing: np.isPlaying, color: .white)
-                .frame(width: 17, height: height * 0.38)
-                .padding(.trailing, 12)
-            if model.caffeinated, model.status == nil { CupBadge() }
+            if model.musicBarsShown, !model.musicBarsOnLeft {
+                bars.padding(.trailing, model.musicBarsTrailing)
+            }
+            if model.showsCup { CupBadge() }
         }
         .frame(height: height)
+    }
+
+    private var bars: some View {
+        Visualizer(playing: np.isPlaying, color: .white, active: active)
+            .frame(width: 17, height: height * 0.38)
     }
 }
 
@@ -355,7 +363,7 @@ struct StatusLiveView: View {
                         .padding(.trailing, s.kind == .working ? 4 : 0)
                         .frame(width: model.statusLeftEar, height: height, alignment: .trailing)
                 } else {
-                    StatusSlot(item: s, showDetail: !model.statusSplit)
+                    StatusSlot(item: s, showDetail: !model.statusSplit, titleLimit: model.statusTitleLimit)
                         .padding(.leading, 12)
                         .frame(width: model.statusLeftEar, alignment: .leading)
                 }
@@ -371,11 +379,11 @@ struct StatusLiveView: View {
                         .fixedSize()
                         .padding(.trailing, 12)
                 }
-                if model.caffeinated { CupBadge() }
+                if model.showsCup { CupBadge() }
             } else if model.status?.kind == .working {
                 // Claude working: just its spark on the left — no pet; the cup only if Keep Awake is on.
-                if model.caffeinated { CupBadge() }
-            } else if model.pet != .none {
+                if model.showsCup { CupBadge() }
+            } else if model.pet != .none, model.petFits {
                 PetView(kind: model.pet, hovering: model.hovering, active: active)
                     .frame(width: IslandModel.petEar, height: height)
             }
@@ -477,7 +485,7 @@ struct PeekMusicView: View {
                 ArtworkView(image: np.artwork, size: height - (height > 30 ? 14 : 8))
                     .padding(.leading, 12)
                 Spacer(minLength: 0)
-                Visualizer(playing: np.isPlaying, color: .white)
+                Visualizer(playing: np.isPlaying, color: .white, active: model.presentation == .peek)
                     .frame(width: 17, height: height * 0.38)
                     .padding(.trailing, 14)
             }
@@ -782,21 +790,32 @@ struct ArtworkView: View {
     }
 }
 
-/// Little equaliser bars. Pure decoration — driven by time, not audio.
+/// Little equaliser bars. With "Bars follow the music" on they move with the sound (LiveAudio); otherwise,
+/// or without the permission, they're decoration driven by time.
 /// Animated by Core Animation in the render server, so it costs Peaky nothing per frame (a SwiftUI
 /// timeline here re-laid-out the whole island 20× a second, ~8% CPU while music played).
 struct Visualizer: NSViewRepresentable {
     let playing: Bool
     let color: Color
+    /// On screen. Only visible bars listen to the sound.
+    var active = true
+    @AppStorage(Prefs.Key.liveBars.rawValue) private var liveBars = false
 
     func makeNSView(context: Context) -> BarsView { BarsView() }
-    func updateNSView(_ v: BarsView, context: Context) { v.update(playing: playing, color: NSColor(color)) }
+    func updateNSView(_ v: BarsView, context: Context) {
+        v.update(playing: playing, color: NSColor(color), listen: playing && active && liveBars)
+    }
+    static func dismantleNSView(_ v: BarsView, coordinator: ()) { v.update(playing: false, color: .white, listen: false) }
 
-    final class BarsView: NSView {
+    final class BarsView: NSView, LevelsSink {
         private var bars: [CALayer] = []
         private var playing = false
+        private var listening = false
+        /// Showing live levels right now (else the decorative bounce).
+        private var live = false
         private let durations: [CFTimeInterval] = [0.42, 0.31, 0.53, 0.37]
         private let lows: [CGFloat] = [0.25, 0.35, 0.2, 0.3]
+        private static let rest: CGFloat = 0.18
 
         override init(frame: NSRect) {
             super.init(frame: frame)
@@ -822,15 +841,46 @@ struct Visualizer: NSViewRepresentable {
                 l.cornerRadius = 1 // pixel style: square-ish blocks
             }
             CATransaction.commit()
-            if playing { animate() }
+            if playing, !live { animate() }
         }
 
-        func update(playing: Bool, color: NSColor) {
+        func update(playing: Bool, color: NSColor, listen: Bool) {
             bars.forEach { $0.backgroundColor = color.cgColor }
-            guard playing != self.playing else { return }
+            let changed = playing != self.playing
             self.playing = playing
-            playing ? animate() : rest()
+            if listen != listening {
+                listening = listen
+                if listen {
+                    LiveAudio.shared.attach(self)
+                } else {
+                    LiveAudio.shared.detach(self)
+                    if live { live = false; decorate(); return }
+                }
+            }
+            if changed, !live { decorate() }
         }
+
+        /// From LiveAudio, ~30× a second while listening; nil = no live sound, go back to the bounce.
+        func show(_ levels: [Float]?) {
+            guard listening else { return }
+            guard let levels else {
+                if live { live = false; decorate() }
+                return
+            }
+            if !live {
+                live = true
+                bars.forEach { $0.removeAnimation(forKey: "bounce") }
+            }
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(1.0 / 30)
+            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .linear))
+            for (l, v) in zip(bars, levels) {
+                l.transform = CATransform3DMakeScale(1, Self.rest + (1 - Self.rest) * CGFloat(v), 1)
+            }
+            CATransaction.commit()
+        }
+
+        private func decorate() { playing ? animate() : rest() }
 
         private func animate() {
             for (i, l) in bars.enumerated() {
@@ -849,7 +899,7 @@ struct Visualizer: NSViewRepresentable {
         private func rest() {
             for l in bars {
                 l.removeAnimation(forKey: "bounce")
-                l.transform = CATransform3DMakeScale(1, 0.18, 1)
+                l.transform = CATransform3DMakeScale(1, Self.rest, 1)
             }
         }
     }

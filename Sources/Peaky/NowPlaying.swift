@@ -42,6 +42,10 @@ final class NowPlaying: ObservableObject {
     private var playingFromAudio = false
     private var audioStarted = false
 
+    /// Debug only: pretend something is playing, so the bars can be checked without sound.
+    func debugForcePlaying(_ on: Bool) { debugForced = on; update(\.isPlaying, on) }
+    private var debugForced = false
+
     /// Sound started or stopped somewhere: if that contradicts what the player told macOS, believe the sound.
     private func audioChanged() {
         guard let app = appBundleID, !title.isEmpty, expectedPlaying == nil else { return }
@@ -218,7 +222,7 @@ final class NowPlaying: ObservableObject {
             playing = true
             playingFromAudio = true
         }
-        update(\.isPlaying, playing && !newTitle.isEmpty)
+        update(\.isPlaying, debugForced || (playing && !newTitle.isEmpty))
         updateRecency()
 
         let elapsed = o["elapsed"] as? Double ?? 0

@@ -1,3 +1,4 @@
+import AppKit
 import CoreAudio
 import Foundation
 
@@ -43,18 +44,38 @@ final class AudioActivity {
 
     /// Is this app (or one of its helper processes, e.g. Chrome's audio service, Safari's WebKit) playing sound?
     func isPlaying(appBundleID app: String) -> Bool {
-        let webKit = app == "com.apple.Safari" || app.hasPrefix("com.apple.SafariTechnologyPreview")
-        for id in processObjects() {
+        processObjects(of: app).contains { id in
             var running: UInt32 = 0, size = UInt32(MemoryLayout<UInt32>.size)
             var addr = Self.address(kAudioProcessPropertyIsRunningOutput)
-            guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &running) == noErr, running != 0 else { continue }
+            return AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &running) == noErr && running != 0
+        }
+    }
+
+    /// The CoreAudio process objects that belong to this app: the app itself and its helpers.
+    /// Matched by bundle ID prefix, or as a child process of the app: browsers play from helpers whose IDs don't
+    /// always share the app's (Dia's sound comes from "company.thebrowser.browser.helper").
+    func processObjects(of app: String) -> [AudioObjectID] {
+        let webKit = app == "com.apple.Safari" || app.hasPrefix("com.apple.SafariTechnologyPreview")
+        let appPIDs = Set(NSRunningApplication.runningApplications(withBundleIdentifier: app).map(\.processIdentifier))
+        return processObjects().filter { id in
+            var pid: pid_t = 0
+            var size = UInt32(MemoryLayout<pid_t>.size)
+            var addr = Self.address(kAudioProcessPropertyPID)
+            if AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &pid) == noErr,
+               appPIDs.contains(pid) || appPIDs.contains(Self.parent(of: pid)) { return true }
             var bid: Unmanaged<CFString>?
             size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             addr = Self.address(kAudioProcessPropertyBundleID)
             guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &bid) == noErr,
-                  let b = bid?.takeRetainedValue() as String? else { continue }
-            if b.hasPrefix(app) || (webKit && b.hasPrefix("com.apple.WebKit")) { return true }
+                  let b = bid?.takeRetainedValue() as String? else { return false }
+            return b.hasPrefix(app) || (webKit && b.hasPrefix("com.apple.WebKit"))
         }
-        return false
+    }
+
+    private static func parent(of pid: pid_t) -> pid_t {
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard pid > 0, sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return -1 }
+        return info.kp_eproc.e_ppid
     }
 }
